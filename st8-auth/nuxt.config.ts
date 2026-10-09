@@ -40,6 +40,11 @@ export default defineNuxtConfig({
          * definePageMeta({ auth: false }).
          */
         publicRoutes: ['/login', '/auth/', '/i/'],
+        /**
+         * Where a member lands right after joining this app (a new signup, a first sign-in, an accepted invite), e.g.
+         * the host's onboarding page. It gets `?redirect=<where they were going>`. Empty = straight to that redirect.
+         */
+        postJoinPath: '',
       },
     },
   },

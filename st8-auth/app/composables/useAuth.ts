@@ -14,17 +14,29 @@ export function authError(err: unknown, fallback: string) {
 export function useAuth() {
   const { user, loggedIn, fetch: fetchSession } = useUserSession()
   const route = useRoute()
+  const { postJoinPath } = useRuntimeConfig().public.st8Auth
+
+  /**
+   * After sign-in: back to where the member was going, or, if they just joined this app, to the host's post-join page
+   * (runtimeConfig.public.st8Auth.postJoinPath, e.g. onboarding) with that destination as its own redirect.
+   * replace: Back shouldn't return a signed-in member to the sign-in form.
+   */
+  function afterSignIn(joined: boolean) {
+    const redirect = safeRedirect(route.query.redirect)
+    const next = postJoinPath && joined ? { path: safeRedirect(postJoinPath), query: redirect === '/' ? {} : { redirect } } : redirect
+    return navigateTo(next, { replace: true })
+  }
 
   async function login(email: string, password: string) {
-    await $fetch('/api/auth/login', { method: 'POST', body: { email, password } })
+    const res = await $fetch('/api/auth/login', { method: 'POST', body: { email, password } })
     await fetchSession()
-    // replace: Back shouldn't return a signed-in member to the sign-in form.
-    await navigateTo(safeRedirect(route.query.redirect), { replace: true })
+    await afterSignIn(res.joined)
   }
 
   async function register(data: { email: string, password: string, first_name: string, last_name: string }) {
+    let joined: boolean
     try {
-      await $fetch('/api/auth/register', { method: 'POST', body: data })
+      joined = (await $fetch('/api/auth/register', { method: 'POST', body: data })).joined
     } catch (err) {
       // The email has an account and the password didn't match: send them to sign in rather than dead-ending here.
       if (authError(err, '').reason === 'account_exists') {
@@ -33,7 +45,7 @@ export function useAuth() {
       throw err
     }
     await fetchSession()
-    await navigateTo(safeRedirect(route.query.redirect), { replace: true })
+    await afterSignIn(joined)
   }
 
   async function requestPasswordReset(email: string) {
@@ -48,7 +60,7 @@ export function useAuth() {
     const res = await $fetch('/api/auth/accept-invite', { method: 'POST', body: { token, password } })
     if (res.signedIn) {
       await fetchSession()
-      await navigateTo('/', { replace: true })
+      await afterSignIn('joined' in res && !!res.joined)
     } else {
       await navigateTo({ path: '/login', query: { invited: '1' } }, { replace: true })
     }

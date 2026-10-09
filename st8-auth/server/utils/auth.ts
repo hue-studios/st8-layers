@@ -157,6 +157,17 @@ export async function revalidateSession(event: AuthEvent) {
   return user
 }
 
+/**
+ * Re-read the session user (names, avatar, profile summary) right away, after the host app changed one of them, so the
+ * shell shows the change without waiting for the heartbeat. The client then calls useUserSession().fetch().
+ */
+export async function refreshSessionUser(event: AuthEvent) {
+  const session = await requireSecureSession(event)
+  const user = await fetchSessionUser(session.user.id)
+  await patchSession(event, { user })
+  return user
+}
+
 /** The signed-in user's Directus id, from the session (no Directus round trip). Throws 401. */
 export async function getCurrentUserId(event: AuthEvent): Promise<string> {
   const session = await requireSecureSession(event)

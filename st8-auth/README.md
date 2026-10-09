@@ -8,7 +8,7 @@ names the app in runtime config.
 
 | Path | What it does |
 |---|---|
-| `server/utils/auth.ts` | `getValidToken` (refresh single-flight, sliding 30-day window, keeps a still-valid token when a refresh fails, 401 only when Directus rejects the refresh token), `getUserClient`, `getCurrentUserId` (from the session, no `/users/me`), `getSessionMembership`, `startSession` / `endSession`, `revalidateSession` |
+| `server/utils/auth.ts` | `getValidToken` (refresh single-flight, sliding 30-day window, keeps a still-valid token when a refresh fails, 401 only when Directus rejects the refresh token), `getUserClient`, `getCurrentUserId` (from the session, no `/users/me`), `getSessionMembership`, `startSession` / `endSession`, `revalidateSession`, `refreshSessionUser` |
 | `server/utils/app-access.ts` | `ensureAppAccess(userId, app)` (open signup: creates the membership, then syncs), `syncAccess(userId)` (memberships → `app_role_policies` → `directus_access`), `readMembership` |
 | `server/utils/profile.ts` | `fetchProfile` (`directus_users` + `profiles` with `industry.name/color`), `fetchSessionUser`, `ensureProfile` |
 | `server/utils/sign-in.ts` | `completeSignIn`: suspended check → `ensureAppAccess` → `ensureProfile` → session |
@@ -55,7 +55,7 @@ The layer expects the host to provide:
 
   Optional: `st8Auth.syncSecret` (or env `ST8_ACCESS_SYNC_SECRET`; unset = `/api/auth/sync-access` is off),
   `st8Auth.sendgrid*` (or env `SENDGRID_API_KEY`, `SENDGRID_FROM_EMAIL`, `SENDGRID_FROM_NAME`, `SENDGRID_REPLY_TO`;
-  no key = emails are a logged no-op), `public.st8Auth.brandColor`, `public.st8Auth.publicRoutes`.
+  no key = emails are a logged no-op), `public.st8Auth.brandColor`, `public.st8Auth.publicRoutes`, `public.st8Auth.postJoinPath` (see "Hooks" below).
 - **An `auth` layout** the pages render in, the shadcn-vue base components (`~/components/ui/{alert,button,field,input}`),
   the `cn` util, and the `eyebrow` / `glass` / `border-glass-border` theme utilities.
 - **Tailwind sources:** the host's CSS must `@source` the layer directory (Insider: `app/assets/css/main.css`).
@@ -63,6 +63,15 @@ The layer expects the host to provide:
   `nitro.storage`, or the rate limits count per serverless instance.
 
 When the layer is extracted to its own package, these become its documented peer requirements.
+
+## Hooks for the host
+
+- **`public.st8Auth.postJoinPath`**: where a member lands right after **joining** this app (a new signup, a first
+  sign-in by a partner or another app's member, an accepted invite), e.g. an onboarding page. It gets
+  `?redirect=<where they were going>` (omitted when that's `/`) and is responsible for sending them on. Later
+  sign-ins go straight to the redirect. Empty (the default) = no detour. Insider: `/onboarding`.
+- **`refreshSessionUser(event)`** (server util): after the host changes a user's names, avatar or profile, call it so
+  `session.user` is re-read at once instead of at the next heartbeat; then `useUserSession().fetch()` on the client.
 
 ## Session
 
