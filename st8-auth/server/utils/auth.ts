@@ -15,11 +15,27 @@ const RECHECK_MS = 5 * 60 * 1000 // re-read membership + user at most every 5 mi
  */
 const refreshInFlight = new Map<string, Promise<DirectusTokens>>()
 
+/**
+ * The result of a refresh, kept for a minute under the refresh token it replaced. A request that left the browser with
+ * the old cookie before the rotated one arrived would otherwise present a spent token after the in-flight entry is
+ * gone, get a 401 from Directus, and end a perfectly good session. Same instance only; across instances the
+ * keep-a-valid-access-token fallback below covers it.
+ */
+const recentlyRotated = new Map<string, { tokens: DirectusTokens, at: number }>()
+const ROTATED_TTL_MS = 60_000
+
 function refreshTokens(refreshToken: string): Promise<DirectusTokens> {
+  const recent = recentlyRotated.get(refreshToken)
+  if (recent && Date.now() - recent.at < ROTATED_TTL_MS) return Promise.resolve(recent.tokens)
   let inflight = refreshInFlight.get(refreshToken)
   if (!inflight) {
     inflight = directusAuthPost<{ data: DirectusTokens }>('/auth/refresh', { refresh_token: refreshToken, mode: 'json' })
-      .then((res) => res.data)
+      .then((res) => {
+        const now = Date.now()
+        for (const [k, v] of recentlyRotated) if (now - v.at >= ROTATED_TTL_MS) recentlyRotated.delete(k)
+        recentlyRotated.set(refreshToken, { tokens: res.data, at: now })
+        return res.data
+      })
       .finally(() => refreshInFlight.delete(refreshToken))
     refreshInFlight.set(refreshToken, inflight)
   }

@@ -8,7 +8,7 @@ names the app in runtime config.
 
 | Path | What it does |
 |---|---|
-| `server/utils/auth.ts` | `getValidToken` (refresh single-flight, sliding 30-day window, keeps a still-valid token when a refresh fails, 401 only when Directus rejects the refresh token), `getUserClient`, `getCurrentUserId` (from the session, no `/users/me`), `getSessionMembership`, `startSession` / `endSession`, `revalidateSession`, `refreshSessionUser` |
+| `server/utils/auth.ts` | `getValidToken` (refresh single-flight, a just-rotated refresh token answered from memory for a minute, sliding 30-day window, keeps a still-valid token when a refresh fails, 401 only when Directus rejects the refresh token), `getUserClient`, `getCurrentUserId` (from the session, no `/users/me`), `getSessionMembership`, `startSession` / `endSession`, `revalidateSession`, `refreshSessionUser` |
 | `server/utils/app-access.ts` | `ensureAppAccess(userId, app)` (open signup: creates the membership, then syncs), `syncAccess(userId)` (memberships → `app_role_policies` → `directus_access`), `readMembership` |
 | `server/utils/profile.ts` | `fetchProfile` (`directus_users` + `profiles` with `industry.name/color`), `fetchSessionUser`, `ensureProfile` |
 | `server/utils/sign-in.ts` | `completeSignIn`: suspended check → `ensureAppAccess` → `ensureProfile` → session |
