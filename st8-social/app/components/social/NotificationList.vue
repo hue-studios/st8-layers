@@ -12,6 +12,7 @@ const icons: Record<string, string> = {
   moderation: 'lucide:shield',
   connection_request: 'lucide:user-plus',
   connection_accepted: 'lucide:user-check',
+  intro: 'lucide:handshake',
 }
 </script>
 

@@ -73,3 +73,36 @@ export function registerSocialTarget(def: SocialTargetDefinition) {
 export function socialTarget(collection: unknown): SocialTargetDefinition | null {
   return typeof collection === 'string' ? (registry.get(collection) ?? null) : null
 }
+
+// ── Notification types from other layers ─────────────────────────────────────────────────────────────────────────
+
+/** A notification row as a registered type sees it: the stored row plus the people it names, resolved. */
+export interface NotificationView {
+  type: string
+  actor: string | null
+  target_collection: string
+  target_item: string
+  data: { with?: string, via?: string, snippet?: string | null } | null
+  /** The actor and `data.with`, by id. */
+  people: Map<string, { id: string, name: string }>
+}
+
+/** How the bell words and links a notification type another layer writes (st8-network: connections and intros). */
+export interface NotificationTypeDefinition {
+  /** The sentence after the actor's name, e.g. "wants to connect". */
+  text: (n: NotificationView) => string
+  /** Where tapping it goes; null = nowhere. Default: the target's registered link. */
+  link?: (n: NotificationView) => string | null
+}
+
+const notificationTypes = new Map<string, NotificationTypeDefinition>()
+
+/** Register (or replace) how a notification type is shown. Call it from a Nitro plugin. */
+export function registerNotificationType(type: string, def: NotificationTypeDefinition) {
+  notificationTypes.set(type, def)
+}
+
+/** The registered definition for a notification type, or null (the layer's own wording applies). */
+export function notificationType(type: string): NotificationTypeDefinition | null {
+  return notificationTypes.get(type) ?? null
+}

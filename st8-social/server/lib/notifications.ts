@@ -19,6 +19,10 @@ export interface NotificationData {
   comment?: string
   reaction?: ReactionKey
   action?: 'hide' | 'unhide' | 'remove' | 'auto_hide'
+  /** Another member the notification is about (an intro: the person you were introduced to). Resolved for the list. */
+  with?: string
+  /** How it came about, for types registered by other layers (e.g. `invite` for a connection made by an invite link). */
+  via?: string
 }
 
 export interface NotifyInput {
@@ -102,7 +106,7 @@ export async function notifyReaction(ctx: SocialContext, recipient: string, targ
   }
 }
 
-interface NotificationRow {
+export interface NotificationRow {
   id: string
   type: NotificationType
   actor: string | null
@@ -113,7 +117,9 @@ interface NotificationRow {
   date_created: string
 }
 
-function textOf(n: NotificationRow): string {
+function textOf(n: NotificationRow, people: Map<string, SocialPerson>): string {
+  const custom = notificationType(n.type)
+  if (custom) return custom.text({ ...n, people })
   const d = n.data ?? {}
   const label = d.label ?? 'post'
   switch (n.type) {
@@ -139,7 +145,15 @@ function textOf(n: NotificationRow): string {
   }
 }
 
-function linkOf(n: NotificationRow): string | null {
+function linkOf(n: NotificationRow, people: Map<string, SocialPerson>): string | null {
+  const custom = notificationType(n.type)
+  if (custom?.link) {
+    try {
+      return custom.link({ ...n, people })
+    } catch {
+      return null
+    }
+  }
   const on = n.data?.on ?? { collection: n.target_collection, item: n.target_item }
   const def = socialTarget(on.collection)
   try {
@@ -165,14 +179,14 @@ export async function listNotifications(ctx: SocialContext, opts: { before?: str
     count(ctx.user, 'notifications', unreadFilter(ctx.me)),
   ])
   const page = list.slice(0, opts.limit).filter((n) => !n.actor || !ctx.blocked.includes(n.actor))
-  const people = await resolvePeople(page.map((n) => n.actor))
+  const people = await resolvePeople([...page.map((n) => n.actor), ...page.map((n) => n.data?.with)])
   const items: SocialNotification[] = page.map((n) => ({
     id: n.id,
     type: n.type,
     actor: n.actor ? (people.get(n.actor) ?? null) : null,
-    text: textOf(n),
+    text: textOf(n, people),
     snippet: n.data?.snippet ?? null,
-    link: linkOf(n),
+    link: linkOf(n, people),
     reaction: n.data?.reaction ?? null,
     createdAt: n.date_created,
     read: !!n.read_at,
@@ -187,4 +201,27 @@ export async function markRead(ctx: SocialContext, ids: string[] | 'all'): Promi
   const unread = await rows<{ id: string }>(sys(), 'notifications', { fields: ['id'], filter, limit: 500 })
   if (unread.length) await sys().request(updateItems('notifications', unread.map((n) => n.id), { read_at: new Date().toISOString() }))
   return count(ctx.user, 'notifications', unreadFilter(ctx.me))
+}
+
+/**
+ * Delete the unread notifications that match `filter` (e.g. a connection request that was withdrawn). Read ones stay:
+ * the member has seen them. Never throws.
+ */
+export async function withdrawNotifications(filter: Record<string, unknown>) {
+  try {
+    const list = await rows<{ id: string }>(sys(), 'notifications', { fields: ['id'], filter: { ...filter, read_at: { _null: true } }, limit: 100 })
+    for (const n of list) await remove('notifications', n.id)
+  } catch (err) {
+    console.error('[st8-social] notifications not withdrawn:', directusError(err).message ?? err)
+  }
+}
+
+/** Mark the unread notifications that match `filter` read (e.g. a request the member answered). Never throws. */
+export async function markNotificationsRead(filter: Record<string, unknown>) {
+  try {
+    const list = await rows<{ id: string }>(sys(), 'notifications', { fields: ['id'], filter: { ...filter, read_at: { _null: true } }, limit: 100 })
+    if (list.length) await sys().request(updateItems('notifications', list.map((n) => n.id), { read_at: new Date().toISOString() }))
+  } catch (err) {
+    console.error('[st8-social] notifications not marked read:', directusError(err).message ?? err)
+  }
 }

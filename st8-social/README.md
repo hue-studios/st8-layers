@@ -14,7 +14,8 @@ member's own token. Realtime is a change signal (`threads.version`), never a raw
 
 | Path | What it does |
 |---|---|
-| `server/utils/st8-social.ts` | The public server API: `registerSocialTarget`, `socialTarget`, `useSt8Social` (config with defaults) |
+| `server/utils/st8-social.ts` | The public server API: `registerSocialTarget`, `socialTarget`, `useSt8Social` (config with defaults), `registerNotificationType` / `notificationType` (how the bell words and links a type another layer writes) |
+| `server/utils/st8-social-server.ts` | `st8SocialServer`: the pieces other ST8 layers build on (layers/st8-network): `socialContext`, `blockedWith`, `resolvePeople`, `activeMembers`, `notify`, `withdrawNotifications`, `markNotificationsRead`, `limitRate` (any key on the `st8-social-rate-limit` mount), `withLock`, `isUniqueViolation`. Host apps don't need them. |
 | `server/plugins/st8-social-comments.ts` | Registers `comments` itself as a target (reactions, reports) |
 | `server/lib/core.ts` | Loosely typed Directus helpers, the per-key lock, rate limits, `socialContext(event)` (member, token client, blocks, moderator check) |
 | `server/lib/threads.ts` | `requireTarget`, `getOrCreateThread`, `summarize` (counts for many targets in a fixed number of queries) |
@@ -49,7 +50,8 @@ The layer expects the host to provide:
   `comment_count`, `reaction_counts`, `last_activity_at`, `locked`, `version`); read `comments` where `thread.app =
   <app>` and (`status ∈ {published, removed, deleted}` or `author = $CURRENT_USER`); read `reactions` where `app =
   <app>`; read `notifications` where `recipient = $CURRENT_USER` and `app = <app>`. Plus, shared by every app (`ST8
-  Social`), their own `connections`. No writes. Moderators additionally read all of their app's `comments` (Insider:
+  Social`), their own `connections` (see layers/st8-network's README for the exact filter: a declined request is
+  readable only by its addressee, a block only by the blocker). No writes. Moderators additionally read all of their app's `comments` (Insider:
   `Insider Moderator`: `thread.app = insider`, granted through `memberships.role` → `app_role_policies`). Keeping these
   reads in the app's policy is what stops one app's members reading another app's conversations through the
   Directus API or realtime.
@@ -137,12 +139,15 @@ The layer expects the host to provide:
 - **Reports**: one per member per target, with a snapshot; you can't report your own. At `autoHideReports` distinct
   pending reports a comment is hidden (`hidden_by` null), logged as `auto_hide`, and its author is told. Moderator
   actions close the pending reports (`actioned`, or `dismissed` on unhide) and are logged.
-- **Blocks** (`connections.status = blocked`, either direction): each side's comments and reactions are hidden from the
-  other and subtracted from the counts they see; no replies, reactions, mentions or notifications across a block.
+- **Blocks** (`connections.status = blocked`, either direction; made and undone by layers/st8-network): each side's
+  comments and reactions are hidden from the other and subtracted from the counts they see; no replies, reactions,
+  mentions or notifications across a block.
 - **Mentions**: a body may mention any active member of the app (the profile rule) who isn't blocked; the
   autocomplete lists fewer: people already in the thread, accepted connections, then `discoverable` members.
 - **Notifications**: reply (to the parent's author, or `kind: comment` to the target's owner), mention, reaction (one
   per person per target, updated on switch, withdrawn on clear), moderation (never names the moderator). The bell
-  lists this app's notifications only.
+  lists this app's notifications only. Other layers add types with `registerNotificationType(type, { text, link })`
+  from a Nitro plugin (st8-network: `connection_request`, `connection_accepted`, `intro`); a row's `data.with` (another
+  member) is resolved for them.
 - **Realtime**: the components subscribe to `threads` (`id`, `version`, target) for what's on screen and to the
   member's own `notifications`. A bump refetches the summary, or the open thread's delta.

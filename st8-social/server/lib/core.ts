@@ -103,13 +103,19 @@ interface RateWindow { count: number, reset: number }
  * mounts a shared driver). 429 with Retry-After once `bucket` passes its limit. A storage failure never blocks.
  */
 export async function socialRateLimit(event: SocialEvent, userId: string, bucket: keyof ReturnType<typeof useSt8Social>['limits'], message: string) {
-  const [max, windowSec] = useSt8Social().limits[bucket]
+  await limitRate(event, `${bucket}:${userId}`, useSt8Social().limits[bucket], message)
+}
+
+/**
+ * The fixed window behind socialRateLimit, for any key and limit ([max, seconds]); other ST8 layers (st8-network) count
+ * in the same mount through it. Serialised per key in this instance, so parallel requests can't both read the same
+ * count.
+ */
+export async function limitRate(event: SocialEvent, key: string, [max, windowSec]: readonly [number, number], message: string) {
   const storage = useStorage<RateWindow>('st8-social-rate-limit')
-  const key = `${bucket}:${userId}`
   const now = Date.now()
   let current: RateWindow
   try {
-    // Serialised per key in this instance, so parallel requests can't both read the same count.
     current = await withLock(`rate:${key}`, async () => {
       const stored = await storage.getItem(key)
       const next = stored && stored.reset > now ? { count: stored.count + 1, reset: stored.reset } : { count: 1, reset: now + windowSec * 1000 }
@@ -123,8 +129,14 @@ export async function socialRateLimit(event: SocialEvent, userId: string, bucket
   if (current.count > max) {
     const retryAfter = Math.max(1, Math.ceil((current.reset - now) / 1000))
     setResponseHeader(event, 'Retry-After', retryAfter)
-    throw createError({ statusCode: 429, data: { retryAfter }, message: `${message} Try again in ${retryAfter} seconds.` })
+    throw createError({ statusCode: 429, data: { retryAfter }, message: `${message} Try again in ${waitText(retryAfter)}.` })
   }
+}
+
+function waitText(seconds: number) {
+  if (seconds <= 90) return `${seconds} seconds`
+  if (seconds <= 90 * 60) return `${Math.ceil(seconds / 60)} minutes`
+  return `${Math.ceil(seconds / 3600)} hours`
 }
 
 // ── Viewer ─────────────────────────────────────────────────────────────────────────────────────────────────────

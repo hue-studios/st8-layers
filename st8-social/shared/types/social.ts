@@ -108,7 +108,7 @@ export interface ThreadDelta {
   cursor: string | null
 }
 
-export type NotificationType = 'reply' | 'mention' | 'reaction' | 'connection_request' | 'connection_accepted' | 'moderation'
+export type NotificationType = 'reply' | 'mention' | 'reaction' | 'connection_request' | 'connection_accepted' | 'intro' | 'moderation'
 
 export interface SocialNotification {
   id: string
