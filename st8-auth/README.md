@@ -32,7 +32,8 @@ The layer expects the host to provide:
 - **`getDirectus()` and `getUserDirectus(token)`** as Nitro server utils (Insider: `server/utils/directus.ts`).
   `getDirectus()` is a scoped service account that can, at minimum: read `directus_users` (`id`, `email`,
   `first_name`, `last_name`, `avatar`, `title`, `status`, `role`); create users with `role`/`status` as presets
-  (never writable fields); update `password` and the name/avatar fields; CRUD `memberships`, `profiles`,
+  (never writable fields); update `password` and the name/avatar fields, but not on administrators or role-less
+  service accounts (those reset through Directus; the reset route says so); CRUD `memberships`, `profiles`,
   `password_reset_tokens`; read `app_role_policies`, `industries`; read `directus_access`, and create/delete user-level
   rows for the mapped policies only. Insider's `Insider Server` policy (`scripts/directus/access.mjs`) is the
   reference.

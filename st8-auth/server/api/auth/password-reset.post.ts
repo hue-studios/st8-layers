@@ -28,6 +28,16 @@ export default defineEventHandler(async (event) => {
   } catch (err) {
     const { status, code, message } = directusError(err)
     if (code === 'FAILED_VALIDATION') throw createError({ statusCode: 400, message: `Your password must be at least ${MIN_PASSWORD_LENGTH} characters.` })
+    if (status === 403) {
+      // The service account may not set passwords on administrators or service accounts (by design: a leaked server
+      // token can't take them over). Those reset through Directus itself.
+      await directus.request(updateItem('password_reset_tokens', row.id, { used_at: new Date().toISOString() })).catch(() => {})
+      throw createError({
+        statusCode: 403,
+        data: { reason: 'staff_account' },
+        message: `This is a staff account, so its password can’t be reset here. Use “Forgot password” on the Directus sign-in at ${useSt8Auth().directusUrl}.`,
+      })
+    }
     console.error('[st8-auth] password-reset: updateUser failed:', status, code, message)
     throw createError({ statusCode: 502, message: 'We couldn’t set your password. Please try again.' })
   }
