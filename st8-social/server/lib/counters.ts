@@ -17,13 +17,14 @@ const sameCounts = (a: Record<string, number>, b: Record<string, number>) => {
   return true
 }
 
+/** This app's reactions on a target, per key. Reactions are per app, like threads. */
 export function reactionCountsFor(collection: string, item: string): Promise<ReactionCounts> {
-  return countBy(sys(), 'reactions', 'reaction', { target_collection: { _eq: collection }, target_item: { _eq: item } })
+  return countBy(sys(), 'reactions', 'reaction', { app: { _eq: useSt8Social().app }, target_collection: { _eq: collection }, target_item: { _eq: item } })
 }
 
-interface ThreadRow { id: string, target_collection: string, target_item: string, version: number | null, locked: boolean | null, comment_count: number | null, reaction_counts: ReactionCounts | null }
+interface ThreadRow { id: string, app: string | null, target_collection: string, target_item: string, version: number | null, locked: boolean | null, comment_count: number | null, reaction_counts: ReactionCounts | null }
 
-export const THREAD_FIELDS = ['id', 'target_collection', 'target_item', 'version', 'locked', 'comment_count', 'reaction_counts']
+export const THREAD_FIELDS = ['id', 'app', 'target_collection', 'target_item', 'version', 'locked', 'comment_count', 'reaction_counts']
 
 async function threadCounts(t: ThreadRow) {
   const [comments, reactions] = await Promise.all([

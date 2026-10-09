@@ -1,14 +1,18 @@
 import type { ReactionCounts, ReactionKey, SocialPerson, SocialTargetRef, ThreadSummary } from '../../shared/types/social'
 import { bumpReaction } from '../../shared/utils/social'
-import { type SocialContext, type SocialEvent, and, create, isUniqueViolation, notBlocked, one, rows, sys } from './core'
+import { type SocialContext, type SocialEvent, and, byId, create, isUniqueViolation, notBlocked, one, rows, sys } from './core'
 import { THREAD_FIELDS } from './counters'
 import { resolvePeople } from './people'
 
-// Threads: one row per target (unique_key "<collection>:<item>"), created on the first comment or reaction. Reads of
-// counts for many targets take a fixed number of queries, however many targets there are.
+// Threads: one row per app per target (unique_key "<app>:<collection>:<item>"), created on the first comment or
+// reaction. Each app's conversation about a shared row (an event, say) is its own: members of one app never see
+// another's, and its moderators act on their own app only. Reads of counts for many targets take a fixed number of
+// queries, however many targets there are.
+
 
 export interface ThreadRow {
   id: string
+  app: string | null
   target_collection: string
   target_item: string
   version: number | null
@@ -30,10 +34,21 @@ export async function requireTarget(event: SocialEvent, ctx: SocialContext, ref:
   return { def, collection: def.collection, item }
 }
 
+/** In-memory key for a target (maps, summaries): `collection:item`. */
 export const threadKey = (collection: string, item: string) => `${collection}:${item}`
 
+/** The stored unique key: one thread per app per target. */
+export const threadUniqueKey = (collection: string, item: string) => `${useSt8Social().app}:${collection}:${item}`
+
+/** This app's thread for a target, or null. */
 export function findThread(collection: string, item: string) {
-  return one<ThreadRow & { unique_key: string }>(sys(), 'threads', { fields: THREAD_FIELDS, filter: { unique_key: { _eq: threadKey(collection, item) } } })
+  return one<ThreadRow & { unique_key: string }>(sys(), 'threads', { fields: THREAD_FIELDS, filter: { unique_key: { _eq: threadUniqueKey(collection, item) } } })
+}
+
+/** A thread by id, only if it belongs to this app (anything else is a 404 to the caller). */
+export async function ownThread(threadId: string) {
+  const t = await byId<ThreadRow>(sys(), 'threads', threadId, THREAD_FIELDS)
+  return t && t.app === useSt8Social().app ? t : null
 }
 
 /** The target's thread, created if it doesn't exist yet (a concurrent create loses to the unique key and re-reads). */
@@ -42,7 +57,7 @@ export async function getOrCreateThread(collection: string, item: string): Promi
   if (existing) return existing
   try {
     return await create<ThreadRow>('threads', {
-      unique_key: threadKey(collection, item),
+      unique_key: threadUniqueKey(collection, item),
       target_collection: collection,
       target_item: item,
       app: useSt8Social().app,
@@ -61,11 +76,16 @@ export async function getOrCreateThread(collection: string, item: string): Promi
 
 const sum = (counts: ReactionCounts) => Object.values(counts).reduce((a, b) => a + (b ?? 0), 0)
 
-/** One `_or` filter matching every target in `refs` on `target_collection` / `target_item`. */
+/** One filter matching this app's rows (threads, reactions) for every target in `refs`. */
 export function targetFilter(refs: SocialTargetRef[]): Record<string, unknown> {
   const byCollection = new Map<string, string[]>()
   for (const r of refs) byCollection.set(r.collection, [...(byCollection.get(r.collection) ?? []), r.item])
-  return { _or: [...byCollection].map(([collection, items]) => ({ target_collection: { _eq: collection }, target_item: { _in: items } })) }
+  return {
+    _and: [
+      { app: { _eq: useSt8Social().app } },
+      { _or: [...byCollection].map(([collection, items]) => ({ target_collection: { _eq: collection }, target_item: { _in: items } })) },
+    ],
+  }
 }
 
 /**

@@ -6,8 +6,8 @@ import { notifyReaction, snippetFrom } from './notifications'
 import { resolvePeople } from './people'
 import { findThread, getOrCreateThread, requireTarget, summarizeOne } from './threads'
 
-// Reactions: one per member per target, switchable (docs/go-live-plan.md §5). The unique key
-// "<collection>:<item>:<user>" makes the set a single create-or-update and the clear a single delete; there is never a
+// Reactions: one per member per target per app, switchable (docs/go-live-plan.md §5). The unique key
+// "<app>:<collection>:<item>:<user>" makes the set a single create-or-update and the clear a single delete; there is never a
 // window with two rows for one person.
 
 interface ReactionRow { id: string, reaction: ReactionKey }
@@ -18,7 +18,8 @@ export async function setReaction(event: SocialEvent, ctx: SocialContext, input:
   const reaction = input.reaction ?? null
   if (reaction !== null && !isReactionKey(reaction)) throw createError({ statusCode: 400, message: `Reaction must be one of ${REACTION_KEYS.join(', ')}, or null.` })
   const { def, collection, item } = await requireTarget(event, ctx, input, 'reactions')
-  const uniqueKey = `${collection}:${item}:${ctx.me}`
+  const app = useSt8Social().app
+  const uniqueKey = `${app}:${collection}:${item}:${ctx.me}`
 
   const changed = await withLock(`reaction:${uniqueKey}`, async () => {
     const existing = await one<ReactionRow>(sys(), 'reactions', { fields: ['id', 'reaction'], filter: { unique_key: { _eq: uniqueKey } } })
@@ -33,7 +34,7 @@ export async function setReaction(event: SocialEvent, ctx: SocialContext, input:
       return true
     }
     try {
-      await create('reactions', { unique_key: uniqueKey, target_collection: collection, target_item: item, user: ctx.me, reaction }, ['id'])
+      await create('reactions', { unique_key: uniqueKey, app, target_collection: collection, target_item: item, user: ctx.me, reaction }, ['id'])
     } catch (err) {
       // Another request from the same member created it first: switch that one instead.
       if (!isUniqueViolation(err)) throw err
@@ -77,7 +78,7 @@ export async function setReaction(event: SocialEvent, ctx: SocialContext, input:
 async function countsFor(ctx: SocialContext, collection: string, item: string) {
   const list = await rows<{ reaction: ReactionKey }>(ctx.user, 'reactions', {
     fields: ['reaction'],
-    filter: and({ target_collection: { _eq: collection }, target_item: { _eq: item } }, notBlocked('user', ctx.blocked)),
+    filter: and({ app: { _eq: useSt8Social().app }, target_collection: { _eq: collection }, target_item: { _eq: item } }, notBlocked('user', ctx.blocked)),
     limit: -1,
   })
   const reactions: ReactionCounts = {}
@@ -90,7 +91,7 @@ export async function listReactors(event: SocialEvent, ctx: SocialContext, input
   const { collection, item } = await requireTarget(event, ctx, input, 'reactions')
   const list = await rows<{ user: string, reaction: ReactionKey, date_created: string }>(ctx.user, 'reactions', {
     fields: ['user', 'reaction', 'date_created'],
-    filter: and({ target_collection: { _eq: collection }, target_item: { _eq: item } }, notBlocked('user', ctx.blocked)),
+    filter: and({ app: { _eq: useSt8Social().app }, target_collection: { _eq: collection }, target_item: { _eq: item } }, notBlocked('user', ctx.blocked)),
     sort: ['-date_created'],
     limit: 500,
   })

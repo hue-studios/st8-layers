@@ -15,9 +15,10 @@ export default defineNitroPlugin(() => {
       const ids = items.filter(isSocialId)
       if (!ids.length) return new Set()
       const ctx = await socialContext(event)
+      // Only this app's comments: another app's conversation is never visible here.
       const found = await rows<{ id: string, thread: { target_collection: string, target_item: string } | null }>(sys(), 'comments', {
         fields: ['id', { thread: ['target_collection', 'target_item'] }],
-        filter: { id: { _in: ids } },
+        filter: { id: { _in: ids }, thread: { app: { _eq: useSt8Social().app } } },
         limit: -1,
       })
       // Readable by the member (their policy), published, author not blocked.
@@ -39,7 +40,7 @@ export default defineNitroPlugin(() => {
     },
 
     async owners(items) {
-      const found = await rows<{ id: string, author: string | null }>(sys(), 'comments', { fields: ['id', 'author'], filter: { id: { _in: items.filter(isSocialId) } }, limit: -1 })
+      const found = await rows<{ id: string, author: string | null }>(sys(), 'comments', { fields: ['id', 'author'], filter: { id: { _in: items.filter(isSocialId) }, thread: { app: { _eq: useSt8Social().app } } }, limit: -1 })
       return new Map(found.filter((c) => c.author).map((c) => [c.id, c.author!]))
     },
 

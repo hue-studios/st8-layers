@@ -5,7 +5,7 @@ import { recountComment, touchThread } from './counters'
 import { type NotifyInput, notify, snippetFrom, snippetOf } from './notifications'
 import { mentionable, resolvePeople } from './people'
 import { logModeration, resolveReports } from './moderation'
-import { type ThreadRow, findThread, getOrCreateThread, requireTarget, summarizeOne } from './threads'
+import { findThread, getOrCreateThread, ownThread, requireTarget, summarizeOne } from './threads'
 
 // Comments (docs/go-live-plan.md §5). Reads go through the member's own token, so Directus decides visibility: others'
 // hidden comments never come back, moderators see everything. Writes go through the server account after the checks
@@ -88,13 +88,13 @@ export async function toViews(ctx: SocialContext, list: CommentRow[], opts: View
     ctx.isModerator(),
     rows<{ target_item: string, reaction: ReactionKey }>(ctx.user, 'reactions', {
       fields: ['target_item', 'reaction'],
-      filter: { target_collection: { _eq: 'comments' }, target_item: { _in: ids }, user: { _eq: ctx.me } },
+      filter: { app: { _eq: useSt8Social().app }, target_collection: { _eq: 'comments' }, target_item: { _in: ids }, user: { _eq: ctx.me } },
       limit: -1,
     }),
     ctx.blocked.length
       ? rows<{ target_item: string, reaction: ReactionKey }>(ctx.user, 'reactions', {
           fields: ['target_item', 'reaction'],
-          filter: { target_collection: { _eq: 'comments' }, target_item: { _in: ids }, user: { _in: ctx.blocked } },
+          filter: { app: { _eq: useSt8Social().app }, target_collection: { _eq: 'comments' }, target_item: { _in: ids }, user: { _in: ctx.blocked } },
           limit: -1,
         })
       : Promise.resolve([]),
@@ -272,7 +272,7 @@ export async function readGroup(event: SocialEvent, ctx: SocialContext, groupId:
   if (!isSocialId(groupId)) throw createError({ statusCode: 404, message: 'Not found' })
   const head = await byId<CommentRow & { thread: string }>(ctx.user, 'comments', groupId, ['id', 'thread', 'root', 'depth', 'author'])
   if (!head || (head.author && ctx.blocked.includes(head.author))) throw createError({ statusCode: 404, message: 'Not found' })
-  const thread = await byId<ThreadRow>(sys(), 'threads', head.thread, ['id', 'target_collection', 'target_item', 'locked'])
+  const thread = await ownThread(head.thread)
   if (!thread) throw createError({ statusCode: 404, message: 'Not found' })
   await requireTarget(event, ctx, { collection: thread.target_collection, item: thread.target_item }, 'comments')
 
@@ -308,9 +308,10 @@ async function readOwnComment(ctx: SocialContext, id: string) {
   return c
 }
 
+/** The comment's thread, which must be this app's: another app's comments are a 404 here, for authors and moderators alike. */
 async function threadTargetOf(threadId: string) {
-  const t = await byId<ThreadRow>(sys(), 'threads', threadId, ['id', 'target_collection', 'target_item', 'locked'])
-  if (!t) throw createError({ statusCode: 404, message: 'Not found' })
+  const t = await ownThread(threadId)
+  if (!t) throw createError({ statusCode: 404, message: 'Comment not found' })
   return t
 }
 

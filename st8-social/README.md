@@ -3,6 +3,8 @@
 The global ST8 social layer (docs/go-live-plan.md §5): reactions, comments with nested replies, reports with
 auto-hide, moderator actions, notifications and realtime, shared by Insider, Summit and Portal. Nothing in it is
 Insider-specific: the host says which collections are social targets and how to check that a member may see one.
+Conversations are **per app**: each app has its own thread on a shared row (an event, say), with its own comments,
+reactions, reports, moderators and notifications.
 
 **Principles.** Every write goes through `server/api/social/*` (validate, check membership and target visibility,
 rate-limit, recount, bump the thread version, log, notify). Directus permissions do the visibility: reads use the
@@ -42,11 +44,18 @@ The layer expects the host to provide:
   `threads`, `comments`, `reactions`, `reports`, `moderation_log`, `notifications`; read `connections`, `memberships`,
   `profiles` (with `industry.color`) and `directus_users` (`id`, names, `avatar`, `title`, `status`); and read whatever
   the host's `visible()` hooks read. Insider's `Insider Server` policy is the reference.
-- **Member policies** (Insider: `ST8 Social`, `scripts/directus/access.mjs`): read `threads` (`id`, `target_collection`,
-  `target_item`, `app`, `comment_count`, `reaction_counts`, `last_activity_at`, `locked`, `version`); read `comments`
-  where `status ∈ {published, removed, deleted}` or `author = $CURRENT_USER`; read `reactions`; read `notifications`
-  where `recipient = $CURRENT_USER`; read their own `connections`. No writes. Moderators additionally read all
-  `comments` (Insider: `Insider Moderator`, granted through `memberships.role` → `app_role_policies`).
+- **Member policies, per app** (Insider: `Insider Member`, from `appSocialReads('insider')` in
+  `scripts/directus/access.mjs`): read `threads` where `app = <app>` (`id`, `target_collection`, `target_item`, `app`,
+  `comment_count`, `reaction_counts`, `last_activity_at`, `locked`, `version`); read `comments` where `thread.app =
+  <app>` and (`status ∈ {published, removed, deleted}` or `author = $CURRENT_USER`); read `reactions` where `app =
+  <app>`; read `notifications` where `recipient = $CURRENT_USER` and `app = <app>`. Plus, shared by every app (`ST8
+  Social`), their own `connections`. No writes. Moderators additionally read all of their app's `comments` (Insider:
+  `Insider Moderator`: `thread.app = insider`, granted through `memberships.role` → `app_role_policies`). Keeping these
+  reads in the app's policy is what stops one app's members reading another app's conversations through the
+  Directus API or realtime.
+- **Schema**: `threads`, `comments`, `reactions` (with `app`), `reports`, `moderation_log`, `notifications` as created
+  by `scripts/directus/schema.mjs`. Keys: threads `app:collection:item`, reactions `app:collection:item:user`, reports
+  `app:collection:item:reporter`.
 - **Targets**, registered from a Nitro plugin:
 
   ```ts
@@ -117,6 +126,8 @@ The layer expects the host to provide:
 - **Nesting**: any depth is stored (`parent`, `root`); `depth` is capped at 2. A reply to a depth-2 comment is stored
   under it, rendered in the same depth-1 group, and shows "↪ @name". If a depth-1 parent is hidden or blocked, its
   visible replies keep a "not available" placeholder.
+- **Per app**: every read, count and write is scoped to `st8Auth.app`. Another app's comment is a 404 here, for its
+  author and for this app's moderators; the bell lists this app's notifications only.
 - **Counters** are recomputed from the source rows on every write and re-verified, so they converge on the exact
   count under concurrency, across instances too. `version` is a change signal: clients refetch on any change, not
   only an increase.

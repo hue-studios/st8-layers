@@ -28,7 +28,7 @@ export async function logModeration(entry: { moderator: string | null, action: L
 export async function resolveReports(target: { collection: string, item: string }, moderator: string | null, outcome: { status: 'actioned' | 'dismissed', action: 'none' | 'hide' | 'remove' }) {
   const pending = await rows<{ id: string }>(sys(), 'reports', {
     fields: ['id'],
-    filter: { target_collection: { _eq: target.collection }, target_item: { _eq: target.item }, status: { _eq: 'pending' } },
+    filter: { app: { _eq: useSt8Social().app }, target_collection: { _eq: target.collection }, target_item: { _eq: target.item }, status: { _eq: 'pending' } },
     limit: -1,
   })
   if (!pending.length) return
@@ -36,7 +36,7 @@ export async function resolveReports(target: { collection: string, item: string 
 }
 
 /**
- * File a report: one per member per target (the unique key), with a snapshot of the target as it is now. Members
+ * File a report: one per member per target per app (the unique key), with a snapshot of the target as it is now. Members
  * can't report their own things. A comment with `autoHideReports` distinct pending reports is hidden until a moderator
  * reviews it, and that is logged.
  */
@@ -52,7 +52,7 @@ export async function createReport(event: SocialEvent, ctx: SocialContext, input
 
   try {
     await create('reports', {
-      unique_key: `${collection}:${item}:${ctx.me}`,
+      unique_key: `${useSt8Social().app}:${collection}:${item}:${ctx.me}`,
       target_collection: collection,
       target_item: item,
       reporter: ctx.me,
@@ -74,7 +74,7 @@ export async function createReport(event: SocialEvent, ctx: SocialContext, input
 async function maybeAutoHide(commentId: string): Promise<boolean> {
   const threshold = useSt8Social().autoHideReports
   return withLock(`comment:${commentId}`, async () => {
-    const pending = await count(sys(), 'reports', { target_collection: { _eq: 'comments' }, target_item: { _eq: commentId }, status: { _eq: 'pending' } })
+    const pending = await count(sys(), 'reports', { app: { _eq: useSt8Social().app }, target_collection: { _eq: 'comments' }, target_item: { _eq: commentId }, status: { _eq: 'pending' } })
     if (pending < threshold) return false
     const c = await byId<{ id: string, thread: string, author: string | null, body: string | null, status: string }>(sys(), 'comments', commentId, ['id', 'thread', 'author', 'body', 'status'])
     if (!c || c.status !== 'published') return false
