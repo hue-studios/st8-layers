@@ -22,12 +22,13 @@ pnpm add github:hue-studios/st8-layers#v0.1.0
 ```
 
 ```ts
-// nuxt.config.ts: list only the layers the app uses, dependencies first
+// nuxt.config.ts: list only the layers the app uses, dependencies first. Name each layer's nuxt.config: Nuxt
+// can't resolve a bare package subfolder as a layer ("Cannot extend config from …"), and skips it with only a warning.
 export default defineNuxtConfig({
   extends: [
-    '@hue-studios/st8-layers/st8-auth',
-    '@hue-studios/st8-layers/st8-social',
-    '@hue-studios/st8-layers/st8-network',
+    '@hue-studios/st8-layers/st8-auth/nuxt.config',
+    '@hue-studios/st8-layers/st8-social/nuxt.config',
+    '@hue-studios/st8-layers/st8-network/nuxt.config',
   ],
 })
 ```
