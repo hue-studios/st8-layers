@@ -9,7 +9,7 @@ onMounted(() => (ready.value = true))
 </script>
 
 <template>
-  <Button type="submit" :disabled="loading || !ready" class="w-full rounded-full font-bold tracking-wider uppercase">
+  <Button type="submit" :disabled="loading || !ready" class="w-full rounded-[var(--st8-auth-radius,9999px)] font-bold tracking-wider uppercase">
     <Icon v-if="loading" name="lucide:loader-circle" class="animate-spin" />
     <slot />
   </Button>

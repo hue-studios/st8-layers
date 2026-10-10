@@ -1,6 +1,6 @@
 {
   "name": "@hue-studios/st8-layers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared Nuxt layers for the Southern Tier 8 apps (Insider, Summit, Portal): auth, social and network over the ST8 Directus",
   "type": "module",
   "license": "UNLICENSED",
@@ -19,11 +19,16 @@
     "@vueuse/core": "^15.0.0",
     "nuxt": "^4.6.0",
     "nuxt-auth-utils": "^0.5.31",
+    "sharp": "^0.35.0",
     "vue": "^3.5.0",
     "vue-sonner": "^2.0.9"
   },
   "peerDependenciesMeta": {
-    "@vueuse/core": { "optional": true },
-    "vue-sonner": { "optional": true }
+    "@vueuse/core": {
+      "optional": true
+    },
+    "vue-sonner": {
+      "optional": true
+    }
   }
 }

@@ -1,8 +1,8 @@
-# layers/st8-auth
+# st8-auth
 
-The shared ST8 login: a sealed `nuxt-auth-utils` session over Directus users, built here so Summit and Portal can
-`extends` it later (docs/go-live-plan.md §3, "Packaging for reuse"). Nothing in it is Insider-specific; the host
-names the app in runtime config.
+The shared ST8 login and the global profile: a sealed `nuxt-auth-utils` session over Directus users, per-app access,
+and the member's own profile (insider/docs/go-live-plan.md §2–§3). Used by Insider (a members-only app) and Summit (a
+public site with accounts). Nothing in it is app-specific; the host names the app in runtime config.
 
 ## What's in it
 
@@ -12,6 +12,9 @@ names the app in runtime config.
 | `server/utils/app-access.ts` | `ensureAppAccess(userId, app)` (open signup: creates the membership, then syncs), `syncAccess(userId)` (memberships → `app_role_policies` → `directus_access`), `readMembership`, `currentMembership` (lifts a suspension that has run out), `suspendMembership` / `restoreMembership`, `onMembershipChange` |
 | `server/middleware/st8-membership.ts` | Every `/api` request with a session (not `/api/auth/*`) re-checks the membership through `getSessionMembership` |
 | `server/utils/profile.ts` | `fetchProfile` (`directus_users` + `profiles` with `industry.name/color`), `fetchSessionUser`, `ensureProfile` |
+| `server/utils/own-profile.ts` | The member's own profile: `readOwnProfile`, `applyProfileUpdate` (names and title with their token, the `profiles` row and county links with the server account; only the keys sent), `allowedProfileChoices`, avatars (`sniffImage`, `encodeAvatar`: sharp re-encode to WebP ≤1024px with no metadata, `uploadAvatarFile` into `st8Auth.avatarFolder`, `deleteOldAvatar`), and for hosts that show other people: `readProfileRecord`, `toMemberSummary`, `toMemberProfile`, `requireActiveMember`, `isUuid` |
+| `server/api/profile/*` | `GET` / `PATCH /api/profile` (`OwnProfileResponse`), `POST` / `DELETE /api/profile/avatar` |
+| `server/api/{industries,counties}.get.ts` | The published industries and counties (cached): profile choices, and free for the host |
 | `server/utils/sign-in.ts` | `completeSignIn`: suspended check → `ensureAppAccess` → `ensureProfile` → session |
 | `server/utils/users.ts` | `findUserByEmail` (case-insensitive; some legacy emails are mixed-case) |
 | `server/utils/rate-limit.ts` | `enforceRateLimit` (fixed window in the `st8-auth-rate-limit` storage mount) |
@@ -20,8 +23,10 @@ names the app in runtime config.
 | `server/api/auth/*` | `login`, `register`, `logout`, `refresh`, `heartbeat`, `password-request`, `password-reset`, `accept-invite`, `sync-access` |
 | `server/api/websocket/token.get.ts` | The access token for the realtime handshake (see "Tokens" below) |
 | `server/dev/session.ts` | Dev-only `/api/auth/dev/session`: inspect the session, simulate an expired token. Not in production builds. |
-| `app/middleware/auth.global.ts` | Every route needs a session except `publicRoutes` and pages with `definePageMeta({ auth: false })` |
-| `app/composables/useAuth.ts` | `login`, `register`, `requestPasswordReset`, `resetPassword`, `acceptInvite`, `logout`, plus `authError()` |
+| `app/middleware/auth.global.ts` | Members-only pages (`isMembersOnlyRoute`, `app/utils/st8-access.ts`) send a signed-out visitor to sign in; which pages those are depends on `public.st8Auth.defaultAccess` (below) |
+| `app/composables/useAuth.ts` | `login`, `register`, `requestPasswordReset`, `resetPassword`, `acceptInvite`, `logout` (a public site keeps you on the page), plus `authError()` |
+| `app/composables/useOwnProfile.ts`, `useIndustries.ts`, `useCounties.ts` | The member's profile with `save` / `uploadAvatar` / `removeAvatar`; the choices |
+| `app/utils/profile-form.ts` | `toDraft`, `profileChanges` (what a form should PATCH), `checkProfileUpdate` (the server's rules, client side), `profileError`, `downscaleImage` |
 | `app/plugins/session-resume.client.ts` | Pings the heartbeat when the app returns to the foreground, and every 2 minutes while it's in view |
 | `app/plugins/session-guard.client.ts` | Wraps the global `$fetch`: any `/api` 401 (outside `/api/auth/*`) means the session ended; go to sign-in (`?suspended=1` for a suspension) |
 | `app/composables/useSessionEnded.ts` | What both plugins do on a 401: re-read the session, then `/login?redirect=…` |
@@ -29,6 +34,7 @@ names the app in runtime config.
 | `app/pages/` | `/login`, `/auth/register`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/accept-invite` |
 | `app/components/auth/` | The forms (`AuthLoginForm`, `AuthRegisterForm`, `AuthForgotPasswordForm`, `AuthNewPasswordForm`) and their pieces |
 | `shared/types/auth.d.ts` | The typed session (`#auth-utils` augmentation) |
+| `shared/types/profile.ts`, `shared/utils/profile.ts`, `shared/utils/slug.ts` | Profile shapes (`OwnProfile`, `MemberProfile`, …), the input rules both sides run (`normalizeProfileUpdate`, `PROFILE_LIMITS`, onboarding steps), `slugify` |
 
 ## Contract with the host app
 
@@ -38,10 +44,12 @@ The layer expects the host to provide:
   `getDirectus()` is a scoped service account that can, at minimum: read `directus_users` (`id`, `email`,
   `first_name`, `last_name`, `avatar`, `title`, `status`, `role`); create users with `role`/`status` as presets
   (never writable fields); update `password` and the name/avatar fields, but not on administrators or role-less
-  service accounts (those reset through Directus; the reset route says so); CRUD `memberships` (including `status`,
-  `suspended_until`, `suspended_reason`, which suspension writes), `profiles`, `password_reset_tokens`; read `app_role_policies`, `industries`; read `directus_access`, and create/delete user-level
-  rows for the mapped policies only. Insider's `Insider Server` policy (`scripts/directus/access.mjs`) is the
-  reference.
+  service accounts (those reset through Directus; the reset route says so); read all `memberships` and create/update
+  this app's (including `status`, `suspended_until`, `suspended_reason`, which suspension writes); create/read/update
+  `profiles` and `password_reset_tokens`, and CRUD `profiles_counties`; read `app_role_policies`, `industries`,
+  `counties`; read `directus_access`, and create/delete user-level rows for **this app's** mapped policies only; create
+  and read `directus_files` and delete replaced avatars in the avatar folder. References: Insider's `Insider Server`
+  (insider `scripts/directus/access.mjs`) and Summit's `Summit Server` (summit-v2 `scripts/directus-st8-access.mjs`).
 - **Runtime config:**
 
   ```ts
@@ -51,25 +59,34 @@ The layer expects the host to provide:
       apps: { insider: '' },     // apps a reset link may open (app → origin; '' = this app's APP_URL)
       joinViaCollections: ['events'], // collections another app's join link may name in ?via= (the default)
       timeZone: 'America/New_York',     // dates shown to members (a suspension's end); the default
+      avatarFolder: '',          // Directus Files folder for avatars; '' = env DIRECTUS_AVATAR_FOLDER ("Member avatars")
     },
     public: {
       appUrl: '…',               // this app's public origin
       directusUrl: '…',
-      st8Auth: { appName: 'Industry Insider' },
+      st8Auth: {
+        appName: 'Industry Insider',
+        defaultAccess: 'members', // 'members': every page needs a session except publicRoutes / meta auth: false
+                                  // 'public': every page is open except protectedRoutes / meta auth: true (Summit)
+      },
     },
   }
   ```
 
   Optional: `st8Auth.syncSecret` (or env `ST8_ACCESS_SYNC_SECRET`; unset = `/api/auth/sync-access` is off),
   `st8Auth.sendgrid*` (or env `SENDGRID_API_KEY`, `SENDGRID_FROM_EMAIL`, `SENDGRID_FROM_NAME`, `SENDGRID_REPLY_TO`;
-  no key = emails are a logged no-op), `public.st8Auth.brandColor`, `public.st8Auth.publicRoutes`, `public.st8Auth.postJoinPath` (see "Hooks" below).
+  no key = emails are a logged no-op), `public.st8Auth.brandColor`, `public.st8Auth.publicRoutes` /
+`protectedRoutes`, `public.st8Auth.postJoinPath` (see "Hooks" below).
+- **Public sites:** with `defaultAccess: 'public'`, an ended session leaves the visitor signed out on the page they're
+  reading (only a suspension goes to sign-in, for its notice), and so does signing out. Pages cached for everyone (ISR)
+  must not render anything from the session on the server: render account UI client-only.
 - **An `auth` layout** the pages render in, the shadcn-vue base components (`~/components/ui/{alert,button,field,input}`),
-  the `cn` util, and the `eyebrow` / `glass` / `border-glass-border` theme utilities.
+  the `cn` util, the `eyebrow` / `glass` / `border-glass-border` theme utilities, and `@nuxt/icon` with the `lucide`
+  set. Shapes follow the host: `--st8-auth-radius` (fields and the submit button; default 9999px, pills) and
+  `--st8-auth-panel-radius` (notices; default 1rem), set on `:root`. `sharp` (avatar re-encoding) is a peer dependency.
 - **Tailwind sources:** the host's CSS must `@source` the layer directory (Insider: `app/assets/css/main.css`).
 - **Shared storage (production):** mount a shared driver (Upstash, Vercel KV, Redis) on `st8-auth-rate-limit` in
   `nitro.storage`, or the rate limits count per serverless instance.
-
-When the layer is extracted to its own package, these become its documented peer requirements.
 
 ## Hooks for the host
 
@@ -97,13 +114,15 @@ Each user has one Directus role and any number of policies. This layer never wri
 
 1. `memberships` (`user`, `app`, `role`, `status`) says who belongs to which app at what level.
 2. `app_role_policies` maps (`app`, `role`) → policies.
-3. `syncAccess(userId)` makes the user's **managed** `directus_access` rows (user-level rows whose policy appears in
-   `app_role_policies`) equal the union for their active memberships. Role-level rows and rows for unmapped policies
-   (Studio, admin, anything else attached by hand) are never touched.
+3. `syncAccess(userId)` makes the user's `directus_access` rows for **this app's** policies (user-level rows whose
+   policy appears in `app_role_policies` for `st8Auth.app`) match their active memberships: the policies wanted are
+   the union over all their apps' active memberships, so a policy two apps map (ST8 Social) stays while either is
+   active. Another app's policies, role-level rows and rows for unmapped policies (Studio, admin, anything else
+   attached by hand) are never touched: each app's server account can only grant its own app's policies.
 
 It runs on every sign-in and from `POST /api/auth/sync-access`, which the Directus Flow
-`ST8 · Reconcile access on memberships` calls on memberships create/update/delete
-(`scripts/directus/memberships-flow.mjs`). The Flow also sends `x-st8-actor` (`{{$accountability.user}}`), so a
+`ST8 · Reconcile access on memberships` calls on memberships create/update/delete, **once per app**
+(insider `scripts/directus/memberships-flow.mjs`). The Flow also sends `x-st8-actor` (`{{$accountability.user}}`), so a
 `status` change made by anyone but this app's server account (an admin in the Studio) reaches `onMembershipChange`
 listeners with `source: 'studio'`. A suspended membership is described under "Suspension" below.
 

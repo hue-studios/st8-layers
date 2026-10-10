@@ -30,7 +30,7 @@ async function submit() {
     <FieldGroup class="gap-5">
       <Field>
         <FieldLabel for="login-email" class="eyebrow">Email</FieldLabel>
-        <Input id="login-email" v-model="email" type="email" name="email" autocomplete="email" inputmode="email" required class="rounded-full px-4" :aria-invalid="!!error" />
+        <Input id="login-email" v-model="email" type="email" name="email" autocomplete="email" inputmode="email" required class="rounded-[var(--st8-auth-radius,9999px)] px-4" :aria-invalid="!!error" />
       </Field>
       <Field>
         <div class="flex items-center justify-between">

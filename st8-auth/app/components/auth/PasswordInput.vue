@@ -10,7 +10,7 @@ const visible = ref(false)
 
 <template>
   <div class="relative">
-    <Input v-bind="$attrs" v-model="model" :type="visible ? 'text' : 'password'" class="rounded-full pr-11 pl-4" />
+    <Input v-bind="$attrs" v-model="model" :type="visible ? 'text' : 'password'" class="rounded-[var(--st8-auth-radius,9999px)] pr-11 pl-4" />
     <Button
       type="button"
       variant="ghost"

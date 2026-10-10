@@ -33,16 +33,16 @@ async function submit() {
       <div class="grid grid-cols-2 gap-3">
         <Field>
           <FieldLabel for="register-first" class="eyebrow">First name</FieldLabel>
-          <Input id="register-first" v-model="form.first_name" name="given-name" autocomplete="given-name" required class="rounded-full px-4" />
+          <Input id="register-first" v-model="form.first_name" name="given-name" autocomplete="given-name" required class="rounded-[var(--st8-auth-radius,9999px)] px-4" />
         </Field>
         <Field>
           <FieldLabel for="register-last" class="eyebrow">Last name</FieldLabel>
-          <Input id="register-last" v-model="form.last_name" name="family-name" autocomplete="family-name" required class="rounded-full px-4" />
+          <Input id="register-last" v-model="form.last_name" name="family-name" autocomplete="family-name" required class="rounded-[var(--st8-auth-radius,9999px)] px-4" />
         </Field>
       </div>
       <Field>
         <FieldLabel for="register-email" class="eyebrow">Email</FieldLabel>
-        <Input id="register-email" v-model="form.email" type="email" name="email" autocomplete="email" inputmode="email" required class="rounded-full px-4" />
+        <Input id="register-email" v-model="form.email" type="email" name="email" autocomplete="email" inputmode="email" required class="rounded-[var(--st8-auth-radius,9999px)] px-4" />
       </Field>
       <Field>
         <FieldLabel for="register-password" class="eyebrow">Password</FieldLabel>

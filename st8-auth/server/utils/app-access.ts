@@ -10,9 +10,13 @@ import type { SessionMembership } from '../../shared/types/auth'
 // keeps it; app access is added on top as policies. New signups get `ST8 Member` from the server policy's create
 // preset, not from this file.
 //
-// syncAccess only touches the rows it manages: user-level directus_access rows whose policy appears somewhere in
-// app_role_policies. Role-level rows, and user-level rows for any policy that isn't mapped (Studio, admin, anything
-// attached by hand for another reason), are never read for removal, so it can't take away access it didn't grant.
+// syncAccess only touches the rows this app manages: user-level directus_access rows whose policy appears in
+// app_role_policies **for this app** (st8Auth.app). Role-level rows, rows for another app's policies, and rows for any
+// policy that isn't mapped (Studio, admin, anything attached by hand for another reason) are never read for removal,
+// so it can't take away access it didn't grant. Each app's server account may only grant its own app's policies, so
+// every app reconciles its own (the memberships Flow calls each app's /api/auth/sync-access). Which policies are
+// wanted is still worked out from all of the user's active memberships: a policy two apps map (ST8 Social) stays while
+// either membership is active.
 
 interface AccessRow {
   id: string
@@ -23,7 +27,7 @@ interface AccessRow {
 const accessEndpoint = (params: Record<string, unknown>) =>
   customEndpoint<AccessRow[]>({ path: '/access', method: 'GET', params })
 
-/** All app_role_policies rows: (app, role) → policy. */
+/** All app_role_policies rows: (app, role) → policy, every app's. */
 async function readPolicyMap() {
   const rows = await getDirectus().request(
     readItems('app_role_policies', { fields: ['app', 'role', 'policy'], limit: -1 }),
@@ -128,19 +132,26 @@ export async function currentMembership(userId: string, app: St8App): Promise<Se
   return readMembership(userId, app)
 }
 
+/** The policies this app manages: the ones its own app_role_policies rows name. */
+const managedBy = (map: Awaited<ReturnType<typeof readPolicyMap>>, app: St8App) =>
+  new Set(map.filter((m) => m.app === app).map((m) => m.policy))
+
 /**
- * Reconcile the user's managed directus_access rows with their active memberships: add the policies the memberships
- * map to, remove managed policies none of them map to, and drop duplicate rows. Idempotent; safe to call any time.
+ * Reconcile the user's directus_access rows for this app's policies with their active memberships: add this app's
+ * policies that any active membership maps to, remove this app's policies none of them map to, and drop duplicate
+ * rows. Other apps' policies are theirs to reconcile. Idempotent; safe to call any time.
  */
 export async function syncAccess(userId: string): Promise<{ added: string[], removed: string[], failed: string[] }> {
   const directus = getDirectus()
+  const { app } = useSt8Auth()
   const [map, memberships, rows] = await Promise.all([
     readPolicyMap(),
     directus.request(readItems('memberships', { fields: ['app', 'role', 'status'], filter: { user: { _eq: userId } }, limit: -1 })),
     directus.request(accessEndpoint({ filter: { user: { _eq: userId } }, fields: ['id', 'user', 'policy'], limit: -1 })),
   ])
 
-  const managed = new Set(map.map((m) => m.policy))
+  const managed = managedBy(map, app)
+  // Every app's mappings: a policy this app shares with another (ST8 Social) is wanted while either membership is active.
   const wanted = new Set(
     map
       .filter((m) => memberships.some((ms) => ms.status === 'active' && ms.app === m.app && ms.role === m.role))
@@ -174,7 +185,7 @@ export async function syncAccess(userId: string): Promise<{ added: string[], rem
     if (ok) removed.push(row.policy)
   }
   for (const policy of wanted) {
-    if (seen.has(policy)) continue
+    if (seen.has(policy) || !managed.has(policy)) continue // another app's policy: its server grants it
     const body = JSON.stringify({ user: userId, policy })
     const ok = await attempt('add', policy, () => directus.request(customEndpoint({ path: '/access', method: 'POST', body })))
     if (ok) added.push(policy)
@@ -227,12 +238,11 @@ export async function ensureAppAccess(userId: string, app: St8App, opts: { via?:
 }
 
 /**
- * Users the memberships Flow may need to reconcile after a delete: everyone holding a managed user-level access row.
- * (A deleted membership can't be read back to find its user.)
+ * Users the memberships Flow may need to reconcile after a delete: everyone holding a user-level access row for one of
+ * this app's policies. (A deleted membership can't be read back to find its user.)
  */
 export async function usersWithManagedAccess(): Promise<string[]> {
-  const map = await readPolicyMap()
-  const policies = [...new Set(map.map((m) => m.policy))]
+  const policies = [...managedBy(await readPolicyMap(), useSt8Auth().app)]
   if (!policies.length) return []
   const rows = await getDirectus().request(
     accessEndpoint({ filter: { user: { _nnull: true }, policy: { _in: policies } }, fields: ['user'], limit: -1 }),

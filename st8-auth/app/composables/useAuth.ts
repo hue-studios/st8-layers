@@ -14,7 +14,7 @@ export function authError(err: unknown, fallback: string) {
 export function useAuth() {
   const { user, loggedIn, fetch: fetchSession } = useUserSession()
   const route = useRoute()
-  const { postJoinPath } = useRuntimeConfig().public.st8Auth
+  const { postJoinPath, defaultAccess } = useRuntimeConfig().public.st8Auth
 
   /**
    * After sign-in: back to where the member was going, or, if they just joined this app, to the host's post-join page
@@ -66,9 +66,15 @@ export function useAuth() {
     }
   }
 
+  /** Sign out of this app (its Directus refresh token is revoked; other ST8 apps keep their own sessions). */
   async function logout() {
     await $fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
     await fetchSession()
+    // A public site (defaultAccess 'public') keeps the visitor on the page they were reading, unless it's members-only.
+    if (defaultAccess === 'public') {
+      if (isMembersOnlyRoute(route)) await navigateTo('/', { replace: true })
+      return
+    }
     await navigateTo('/login', { replace: true })
   }
 

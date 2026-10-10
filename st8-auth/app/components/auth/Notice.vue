@@ -10,7 +10,7 @@ withDefaults(defineProps<{ tone?: 'error' | 'info' | 'success' }>(), { tone: 'in
   <Alert
     :variant="tone === 'error' ? 'destructive' : 'default'"
     :role="tone === 'error' ? 'alert' : 'status'"
-    :class="cn('grid-cols-[1rem_1fr] gap-x-3 rounded-2xl', tone === 'success' && 'border-primary/50', tone === 'info' && 'border-glass-border bg-glass')"
+    :class="cn('grid-cols-[1rem_1fr] gap-x-3 rounded-[var(--st8-auth-panel-radius,1rem)]', tone === 'success' && 'border-primary/50', tone === 'info' && 'border-glass-border bg-glass')"
   >
     <Icon :name="{ error: 'lucide:circle-alert', info: 'lucide:info', success: 'lucide:circle-check' }[tone]" class="size-4 translate-y-0.5" />
     <AlertDescription><slot /></AlertDescription>

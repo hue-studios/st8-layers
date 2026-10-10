@@ -28,6 +28,11 @@ export default defineNuxtConfig({
       joinViaCollections: ['events'] as string[],
       /** Time zone for dates shown to members (a suspension's end). */
       timeZone: 'America/New_York',
+      /**
+       * Directus Files folder for member avatars (POST /api/profile/avatar). Empty = DIRECTUS_AVATAR_FOLDER, else the
+       * Files root. Every ST8 app uses the same folder ("Member avatars").
+       */
+      avatarFolder: '',
       /** Shared secret for POST /api/auth/sync-access (the Directus memberships Flow). Unset = endpoint disabled. */
       syncSecret: '',
       /** Transactional email. Unset key = sending is a logged no-op. SENDGRID_* env vars also work. */
@@ -47,6 +52,14 @@ export default defineNuxtConfig({
          * definePageMeta({ auth: false }).
          */
         publicRoutes: ['/login', '/auth/', '/i/'],
+        /**
+         * 'members' (the default): every page needs a session except `publicRoutes` and pages with
+         * definePageMeta({ auth: false }). 'public': every page is open except `protectedRoutes` and pages with
+         * definePageMeta({ auth: true }), for a public site with accounts (Summit).
+         */
+        defaultAccess: 'members' as 'members' | 'public',
+        /** With defaultAccess 'public': routes that need a session (same matching as publicRoutes). */
+        protectedRoutes: [] as string[],
         /**
          * Where a member lands right after joining this app (a new signup, a first sign-in, an accepted invite), e.g.
          * the host's onboarding page. It gets `?redirect=<where they were going>`. Empty = straight to that redirect.

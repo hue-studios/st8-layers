@@ -39,7 +39,7 @@ async function submit() {
     <FieldGroup>
       <Field>
         <FieldLabel for="forgot-email" class="eyebrow">Email</FieldLabel>
-        <Input id="forgot-email" v-model="email" type="email" name="email" autocomplete="email" inputmode="email" required class="rounded-full px-4" />
+        <Input id="forgot-email" v-model="email" type="email" name="email" autocomplete="email" inputmode="email" required class="rounded-[var(--st8-auth-radius,9999px)] px-4" />
       </Field>
     </FieldGroup>
     <AuthSubmitButton :loading="loading">Send reset link</AuthSubmitButton>
