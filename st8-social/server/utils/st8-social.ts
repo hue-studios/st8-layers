@@ -10,8 +10,10 @@ export function useSt8Social() {
     editWindowMinutes: number
     autoHideReports: number
     teaserThreshold: number
+    autoHide: Partial<{ memberHours: number, historyDays: number, unreliableDismissed: number, unreliableActionedRatio: number }>
     limits: Record<string, number[]>
   }>
+  const autoHide = social.autoHide ?? {}
   return {
     /** The ST8 app this server is (st8-auth's `st8Auth.app`). */
     app: useSt8Auth().app,
@@ -19,13 +21,29 @@ export function useSt8Social() {
     editWindowMs: (social.editWindowMinutes ?? 15) * 60_000,
     autoHideReports: social.autoHideReports ?? 3,
     teaserThreshold: Math.max(social.teaserThreshold ?? 3, 1),
+    /**
+     * Which pending reports count toward the auto-hide (they all reach the queue): from members who joined this app at
+     * least `memberHours` ago and whose record over `historyDays` isn't mostly dismissed (`unreliableDismissed` or more
+     * dismissed and under `unreliableActionedRatio` of their reviewed reports actioned).
+     */
+    autoHide: {
+      memberHours: autoHide.memberHours ?? 24,
+      historyDays: autoHide.historyDays ?? 90,
+      unreliableDismissed: autoHide.unreliableDismissed ?? 5,
+      unreliableActionedRatio: autoHide.unreliableActionedRatio ?? 0.2,
+    },
     limits: {
       comments: [10, 60],
       reactions: [60, 60],
       reports: [20, 3600],
+      reportsDaily: [50, 86400],
+      moderation: [120, 3600],
+      suspensions: [20, 86400],
       teasers: [60, 60],
       ...social.limits,
-    } as Record<'comments' | 'reactions' | 'reports' | 'teasers', [number, number]>,
+    } as Record<'comments' | 'reactions' | 'reports' | 'reportsDaily' | 'moderation' | 'suspensions' | 'teasers', [number, number]>,
+    /** The host's moderation queue page (links in moderators' notifications). */
+    moderationPath: String((useRuntimeConfig().public.st8Social as { moderationPath?: string } | undefined)?.moderationPath || '/moderation'),
   }
 }
 
@@ -69,16 +87,27 @@ export interface SocialTargetDefinition {
    * it) and bumps the thread version so open views refetch; the host only changes its own row.
    */
   moderate?: SocialTargetModeration
+  /**
+   * Clear what the owner wrote on the item while keeping the item (a profile's headline, bio, links and photo). With it,
+   * the moderation queue offers "Clear content" (logged as `clear_profile`, the owner told, never by whom).
+   */
+  clear?: (item: string) => Promise<void>
+  /**
+   * The owner's published items (needs `moderate`). With it, suspending a member can also hide everything they posted
+   * here, and restoring them can bring it back.
+   */
+  ownedBy?: (user: string) => Promise<string[]>
 }
 
 export type SocialModerationAction = 'hide' | 'unhide' | 'remove'
 
 export interface SocialTargetModeration {
-  /** The item's moderation state now, or null when it doesn't exist. */
-  state: (item: string) => Promise<{ status: 'published' | 'hidden' | 'removed', owner: string | null } | null>
+  /** The item's moderation state now, or null when it doesn't exist. `autoHidden`: hidden by reports, not a person. */
+  state: (item: string) => Promise<{ status: 'published' | 'hidden' | 'removed', owner: string | null, autoHidden?: boolean } | null>
   /**
    * Apply the action to the host's row. `moderator` is null for an automatic hide. For `remove` the host should clear
-   * the content (a tombstone) and delete what only the item used (files).
+   * the content (a tombstone) and delete what only the item used (files). A `hide` of an item reports already hid
+   * records the moderator who confirmed it.
    */
   apply: (item: string, action: SocialModerationAction, info: { moderator: string | null, reason: string | null }) => Promise<void>
 }
@@ -87,8 +116,14 @@ const registry = new Map<string, SocialTargetDefinition>()
 
 /** Register (or replace) a social target. Call it from a Nitro plugin in the host app. */
 export function registerSocialTarget(def: SocialTargetDefinition) {
+  if (def.ownedBy && !def.moderate) throw new Error(`[st8-social] target "${def.collection}": ownedBy needs moderate`)
   if (!/^[a-z0-9_]+$/.test(def.collection)) throw new Error(`[st8-social] invalid target collection "${def.collection}"`)
   registry.set(def.collection, def)
+}
+
+/** Every registered target. */
+export function socialTargets(): SocialTargetDefinition[] {
+  return [...registry.values()]
 }
 
 /** The registered target for `collection`, or null. */

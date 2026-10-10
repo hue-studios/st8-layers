@@ -22,7 +22,11 @@ member's own token. Realtime is a change signal (`threads.version`), never a raw
 | `server/lib/counters.ts` | `touchThread` / `recountComment`: recount from the source rows, write, verify, repeat (no atomic increments in Directus) |
 | `server/lib/comments.ts` | Page and delta reads, groups ("View N more"), create / edit / delete / moderate / lock |
 | `server/lib/reactions.ts` | Set, switch or clear one reaction per member per target; reactors list |
-| `server/lib/moderation.ts` | Reports (snapshot, one per member per target), auto-hide (comments, and targets with a `moderate` hook), moderating a host's target, `signalTarget`, `moderation_log` |
+| `server/lib/moderation.ts` | Reports (snapshot, one per member per target), which reports count toward auto-hide, auto-hide (comments, and targets with a `moderate` hook), moderating a host's target, the conflict rule, telling moderators and reporters, `signalTarget`, `moderation_log` |
+| `server/lib/queue.ts` | The moderation queue's reads: reported targets grouped with their reports and the actions open to this moderator, the log, suspended members, the summary |
+| `server/lib/review.ts` | The queue's actions on one target: dismiss, hide, unhide, remove, lock, unlock, clear, refer |
+| `server/lib/suspensions.ts` | Suspend and restore a member here (rank, the optional hide of what they posted, the log, closed reports); logs Studio edits and expiries heard from layers/st8-auth |
+| `server/plugins/st8-social-moderation.ts` | Listens to layers/st8-auth's `onMembershipChange` |
 | `server/lib/targets.ts` | `deleteTargetSocial`: a target is gone for good; its conversation here goes with it |
 | `server/lib/teasers.ts` | Cross-app teasers: other apps' totals on a target (counts and reaction keys only), threshold and blocks applied |
 | `server/lib/notifications.ts` | Create (never to yourself, never across a block), reaction de-duplication, list, mark read |
@@ -34,8 +38,9 @@ member's own token. Realtime is a change signal (`threads.version`), never a raw
 | `app/composables/useSocialTargets.ts` | `useSocialSummary(collection, item)`: batched counts for everything on screen, one realtime subscription for all of them; `useSocialTargets().isGone(key)`: the target vanished for this viewer since it was loaded |
 | `app/composables/useSocialThread.ts` | `createThread`: the state behind `SocialThread` (tree, delta merge, optimistic writes with rollback) |
 | `app/composables/useSocialNotifications.ts` | Unread count and list, live over realtime |
+| `app/composables/useSocialModeration.ts` | Whether the member moderates here and how many reported targets wait (a menu badge); the action and log labels |
 | `app/components/ResponsiveDialog.vue` | Dialog on desktop, bottom drawer on phones. Free for the host to reuse. |
-| `app/components/social/*` | `SocialReactionBar` (variants `bar`, `compact`, `text`, `action`), `SocialReactionSummary`, `SocialReactionPicker`, `SocialReactionGlyphs`, `SocialReactorsDialog`, `SocialThread`, `SocialComment`, `SocialCommentBody`, `SocialComposer`, `SocialMentionTextarea` (the `@` autocomplete, free for host composers), `SocialReportDialog`, `SocialNotificationBell`, `SocialNotificationList`, `SocialAvatar`, `SocialTeaser` (another app's activity on the same row, with its join link) |
+| `app/components/social/*` | `SocialReactionBar` (variants `bar`, `compact`, `text`, `action`), `SocialReactionSummary`, `SocialReactionPicker`, `SocialReactionGlyphs`, `SocialReactorsDialog`, `SocialThread`, `SocialComment`, `SocialCommentBody`, `SocialComposer`, `SocialMentionTextarea` (the `@` autocomplete, free for host composers), `SocialReportDialog`, `SocialNotificationBell`, `SocialNotificationList`, `SocialAvatar`, `SocialTeaser` (another app's activity on the same row, with its join link), `SocialModerationQueue` (the whole queue: Needs review, Reviewed, Suspended, Log), `SocialModerationItem`, `SocialSuspendDialog` |
 
 ## Contract with the host app
 
@@ -74,6 +79,8 @@ The layer expects the host to provide:
       snapshot: async (item) => ({}),        // optional: kept on reports
       link: (item, { comment }) => `/events/${item}${comment ? `?comment=${comment}` : ''}`, // optional
       moderate: { state, apply },            // optional: moderation of the item itself (below)
+      ownedBy: async (user) => [],           // optional, with moderate: a member's published items (suspension hide)
+      clear: async (item) => {},             // optional: clear what the owner wrote (a profile's bio, photo…)
     })
   })
   ```
@@ -101,15 +108,18 @@ The layer expects the host to provide:
     st8Social: {
       moderatorRoles: ['moderator', 'admin'], // memberships.role values that may hide, remove, lock
       editWindowMinutes: 15,                  // or any time before the first reply
-      autoHideReports: 3,                     // distinct pending reports that hide a comment
+      autoHideReports: 3,                     // counting pending reports that hide a comment (or moderate-able item)
+      autoHide: { memberHours: 24, historyDays: 90, unreliableDismissed: 5, unreliableActionedRatio: 0.2 }, // which count
       teaserThreshold: 3,                     // another app's activity shows only from this many people (after blocks)
-      limits: { comments: [10, 60], reactions: [60, 60], reports: [20, 3600], teasers: [60, 60] }, // [max, seconds] per member
+      limits: { comments: [10, 60], reactions: [60, 60], reports: [20, 3600], reportsDaily: [50, 86400],
+                moderation: [120, 3600], suspensions: [20, 86400], teasers: [60, 60] }, // [max, seconds] per member
     },
     public: {
       st8Social: {
         websocketUrl: '',                     // wss://…/websocket; empty = derived from public.directusUrl
         profilePath: '',                      // e.g. '/members/:id'; empty = names don't link
         teasers: [],                          // other apps whose activity shows as a teaser (below); empty = none
+        moderationPath: '/moderation',        // the host's queue page; moderators' notifications link to it
       },
     },
   }
@@ -142,6 +152,13 @@ The layer expects the host to provide:
 | `POST /api/social/targets/moderate` | Moderators: `{ collection, item, action: hide \| unhide \| remove, reason? }` on a target with a `moderate` hook |
 | `GET /api/social/notifications`, `POST /api/social/notifications/read` | The bell: list (this app's), unread count, mark read (`ids` or `all`) |
 | `GET /api/social/mentions?q&collection&item` | Autocomplete (see below) |
+| `GET /api/social/moderation/summary` | `{ canModerate, role, pending }` for the signed-in member (any member may ask) |
+| `GET /api/social/moderation/queue?tab=pending\|reviewed&before=` / `?target=<collection>:<item>` | Moderators: reported targets with their reports, state, preview and the actions open to them |
+| `POST /api/social/moderation/resolve` | Moderators: `{ collection, item, action, reason? }`, action dismiss \| hide \| unhide \| remove \| lock \| unlock \| clear \| refer |
+| `GET /api/social/moderation/log?before=` | Moderators: this app's log, newest first |
+| `GET /api/social/moderation/suspended` | Moderators: members suspended here |
+| `POST /api/social/moderation/suspend` | Moderators: `{ user, until: ISO \| null, reason, hideContent?, from?: { collection, item } }` |
+| `POST /api/social/moderation/unsuspend` | Moderators: `{ user, restoreContent? }` |
 | `GET /api/social/teasers?t=events:12&t=…` | Cross-app teasers for up to 30 targets: `{ app, teasers: { 'events:12': [{ app, people, comments, reactions, member }] } }` (below) |
 
 ## Behaviour notes
@@ -157,10 +174,35 @@ The layer expects the host to provide:
 - **Hidden** comments vanish for everyone but their author (banner) and moderators (banner, Unhide). **Removed** and
   author-**deleted** comments with replies are tombstones with their body cleared; a `[deleted]` tombstone that loses
   its last reply is deleted too.
-- **Reports**: one per member per target, with a snapshot; you can't report your own. At `autoHideReports` distinct
-  pending reports a comment (or a target with a `moderate` hook) is hidden (`hidden_by` null), logged as `auto_hide`,
-  and its author is told; the reports stay pending for the moderators. Moderator actions close the pending reports
-  (`actioned`, or `dismissed` on unhide) and are logged.
+- **Reports**: one per member per target, with a snapshot; you can't report your own; 20 an hour and 50 a day. A
+  target's first pending report sends the app's moderators one `report` notification (not its owner or the reporter).
+  At `autoHideReports` counting pending reports a comment (or a target with a `moderate` hook) is hidden (`hidden_by`
+  null), logged as `auto_hide`, its author told and the moderators told again; the reports stay pending for the
+  moderators. A report counts when its reporter joined the app at least `autoHide.memberHours` ago and their record
+  isn't mostly dismissed (`unreliableDismissed` or more dismissed, under `unreliableActionedRatio` actioned, over
+  `historyDays`); a report whose reporter's account was deleted since still counts. Every report reaches the queue,
+  flagged when it doesn't count. Moderator actions close the pending reports (`actioned`, or `dismissed` when the item
+  is left up) and tell each reporter it was reviewed ("took action" or "left it up"; never what, never by whom).
+- **Moderation** (Phase 8). Moderators are members whose `memberships.role` is in `moderatorRoles` here; the queue
+  (`SocialModerationQueue` on a host page at `moderationPath`; the host 404s it for everyone else) is the only way to
+  reports and the log, which members' and moderators' Directus tokens can't read. Per target:
+  - comments and items with `moderate`: dismiss (an item that's hidden comes back), hide (on one reports hid: "keep
+    hidden", now by a person), unhide, remove, close / reopen comments (for a comment: on the item it's on), suspend
+    the author;
+  - items with `clear` (profiles): dismiss, clear content, suspend; they never auto-hide;
+  - anything else (a shared event): dismiss, close comments, refer to admins (the reports close as actioned, the app's
+    `admin` members get a `report` notification, and an admin fixes it at the source).
+
+  Every action is logged (`moderation_log`, with the moderator) and the person moderated is told what happened, never
+  by whom. **Conflicts**: nobody acts on their own things or on someone they have a block with, either way (403; the
+  queue says why and offers nothing). **Suspension** (`suspend` / `unsuspend`; the switch itself is layers/st8-auth's):
+  moderators suspend members; only admins suspend moderators; admins can't be suspended here (that's the Studio).
+  `until` is a date (≤ 5 years) or null; a reason is required and only moderators see it. `hideContent` hides their
+  published comments and their `ownedBy` items here (quietly, one log entry listing them); restoring can bring back
+  exactly those that are still hidden, and a suspension that runs out does so by itself. `from` closes the reported
+  item's reports. The suspended member isn't sent anything; restoring tells them "Your … membership is active again".
+  A suspension made or lifted in the Studio is logged under the admin who did it (layers/st8-auth's `x-st8-actor`).
+  Rate limits: 120 moderation actions an hour, 20 suspensions a day, per moderator.
 - **`hidden_by` stays on the server**: reads with the member's token never ask for `comments.hidden_by` (whether a
   hidden comment was hidden by a person or by the threshold is looked up with the server account), so a member policy
   can leave the field out and an author never learns which moderator hid their comment.
@@ -173,7 +215,9 @@ The layer expects the host to provide:
   items mention people checks them with `st8SocialServer.mentionable` and notifies with `notify` (type `mention`,
   target = the item): the bell then says "mentioned you in a <label>".
 - **Notifications**: reply (to the parent's author, or `kind: comment` to the target's owner), mention, reaction (one
-  per person per target, updated on switch, withdrawn on clear), moderation (never names the moderator). The bell
+  per person per target, updated on switch, withdrawn on clear), moderation (never names the moderator: what happened
+  to your item, your report or your membership), report (to moderators: a first report, an automatic hide, a
+  referral; links to the queue, marked read once the target is reviewed). The bell
   lists this app's notifications only. Other layers add types with `registerNotificationType(type, { text, link })`
   from a Nitro plugin (st8-network: `connection_request`, `connection_accepted`, `intro`); a row's `data.with` (another
   member) is resolved for them.

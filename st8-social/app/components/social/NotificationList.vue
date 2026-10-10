@@ -10,6 +10,7 @@ const icons: Record<string, string> = {
   reply: 'lucide:message-circle',
   mention: 'lucide:at-sign',
   moderation: 'lucide:shield',
+  report: 'lucide:flag',
   connection_request: 'lucide:user-plus',
   connection_accepted: 'lucide:user-check',
   intro: 'lucide:handshake',

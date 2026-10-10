@@ -15,11 +15,20 @@ export default defineNuxtConfig({
       autoHideReports: 3,
       /** Cross-app teasers: an app's activity on a target shows only from this many people (after blocks). */
       teaserThreshold: 3,
-      /** Per member: [max, window in seconds]. */
+      /**
+       * Which pending reports count toward autoHideReports (every report still reaches the queue): reporters who joined
+       * at least memberHours ago, and whose last historyDays aren't mostly dismissed reports (unreliableDismissed or
+       * more dismissed, under unreliableActionedRatio of their reviewed reports actioned).
+       */
+      autoHide: { memberHours: 24, historyDays: 90, unreliableDismissed: 5, unreliableActionedRatio: 0.2 },
+      /** Per member: [max, window in seconds]. moderation = a moderator's actions, suspensions = theirs per day. */
       limits: {
         comments: [10, 60],
         reactions: [60, 60],
         reports: [20, 3600],
+        reportsDaily: [50, 86400],
+        moderation: [120, 3600],
+        suspensions: [20, 86400],
         teasers: [60, 60],
       },
     },
@@ -37,6 +46,8 @@ export default defineNuxtConfig({
          * joinUrl, openUrl?). Empty = none.
          */
         teasers: [] as { app: string, label: string, joinUrl: string, openUrl?: string }[],
+        /** The host's moderation queue page (SocialModerationQueue); moderators' notifications link to it. */
+        moderationPath: '/moderation',
       },
     },
   },

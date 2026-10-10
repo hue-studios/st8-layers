@@ -38,4 +38,6 @@ export interface SessionMembership {
   app: 'insider' | 'summit' | 'portal'
   role: 'member' | 'contributor' | 'moderator' | 'admin'
   status: 'active' | 'suspended'
+  /** A suspension's end (ISO), or null: indefinite, or not suspended. */
+  until?: string | null
 }

@@ -1,10 +1,10 @@
 import type { CommentStatus, ReactionCounts, ReactionKey, SocialComment, SocialPerson, ThreadDelta, ThreadPage } from '../../shared/types/social'
 import { COMMENT_MAX, MAX_DEPTH, MENTIONS_MAX, REPLIES_SHOWN, bodyLength, bumpReaction, mentionIds, normalizeCommentBody } from '../../shared/utils/social'
-import { type SocialContext, type SocialEvent, and, byId, count, create, isSocialId, notBlocked, remove, requireModerator, rows, socialRateLimit, sys, update } from './core'
+import { type SocialContext, type SocialEvent, and, byId, count, create, isSocialId, notBlocked, remove, rows, socialRateLimit, sys, update } from './core'
 import { recountComment, touchThread } from './counters'
 import { type NotifyInput, notify, snippetFrom, snippetOf } from './notifications'
 import { mentionable, resolvePeople } from './people'
-import { logModeration, resolveReports } from './moderation'
+import { assertNoConflict, logModeration, requireModeratorAction, resolveReports } from './moderation'
 import { findThread, getOrCreateThread, ownThread, requireTarget, summarizeOne } from './threads'
 
 // Comments (docs/go-live-plan.md §5). Reads go through the member's own token, so Directus decides visibility: others'
@@ -162,7 +162,8 @@ export async function toViews(ctx: SocialContext, list: CommentRow[], opts: View
         reply: published && (!opts.locked || isMod),
         react: published,
         report: !isMine && published,
-        moderate: isMod && (published || c.status === 'hidden'),
+        // Nobody moderates their own comment (another moderator does; Phase 8).
+        moderate: isMod && !isMine && (published || c.status === 'hidden'),
       },
     }
   })
@@ -446,29 +447,28 @@ export async function deleteComment(event: SocialEvent, ctx: SocialContext, id: 
 
 export type ModerateAction = 'hide' | 'unhide' | 'remove'
 
-/** Moderator hide / unhide / remove, logged, with the author told (never who did it). */
-export async function moderateComment(event: SocialEvent, ctx: SocialContext, id: string, input: { action?: unknown, reason?: unknown }) {
-  await requireModerator(ctx)
-  const action = input.action as ModerateAction
-  if (!['hide', 'unhide', 'remove'].includes(action)) throw createError({ statusCode: 400, message: 'Unknown action.' })
-  const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 500) || null : null
-  if (!isSocialId(id)) throw createError({ statusCode: 404, message: 'Comment not found' })
-  const c = await byId<CommentRow>(sys(), 'comments', id, COMMENT_FIELDS)
-  if (!c) throw createError({ statusCode: 404, message: 'Comment not found' })
+/**
+ * Hide / unhide / remove a comment as `moderator`, logged, pending reports closed (reporters told), the author told
+ * (never who did it). A `hide` of a comment reports already hid confirms it: it stays hidden, now by a person. `quiet`
+ * (a suspension's bulk hide) changes the row only; the caller logs and signals once.
+ */
+export async function applyCommentModeration(moderator: string | null, c: CommentRow, action: ModerateAction, reason: string | null, opts: { quiet?: boolean } = {}) {
   const t = await threadTargetOf(c.thread)
+  const confirm = action === 'hide' && c.status === 'hidden' && !c.hidden_by
   const allowed = { hide: ['published'], unhide: ['hidden'], remove: ['published', 'hidden'] }[action]
-  if (!allowed.includes(c.status)) throw createError({ statusCode: 409, message: `This comment is ${c.status}.` })
+  if (!confirm && !allowed.includes(c.status)) throw createError({ statusCode: 409, message: `This comment is ${c.status}.` })
 
   const now = new Date().toISOString()
   const snapshot = { body: c.body, author: c.author, status: c.status, on: `${t.target_collection}:${t.target_item}` }
   const patch = {
-    hide: { status: 'hidden', hidden_by: ctx.me, hidden_at: now, hidden_reason: reason },
+    hide: { status: 'hidden', hidden_by: moderator, hidden_at: now, hidden_reason: reason },
     unhide: { status: 'published', hidden_by: null, hidden_at: null, hidden_reason: null },
-    remove: { status: 'removed', body: '', mentions: [], hidden_by: ctx.me, hidden_at: now, hidden_reason: reason },
+    remove: { status: 'removed', body: '', mentions: [], hidden_by: moderator, hidden_at: now, hidden_reason: reason },
   }[action]
   const row = await update<CommentRow>('comments', c.id, patch, COMMENT_FIELDS)
-  await logModeration({ moderator: ctx.me, action, target: { collection: 'comments', item: c.id }, targetAuthor: c.author, reason, snapshot })
-  await resolveReports({ collection: 'comments', item: c.id }, ctx.me, action === 'unhide' ? { status: 'dismissed', action: 'none' } : { status: 'actioned', action })
+  if (opts.quiet) return { row, locked: !!t.locked }
+  await logModeration({ moderator, action, target: { collection: 'comments', item: c.id }, targetAuthor: c.author, reason, snapshot })
+  await resolveReports({ collection: 'comments', item: c.id }, moderator, action === 'unhide' ? { status: 'dismissed', action: 'none' } : { status: 'actioned', action })
   await touchThread(c.thread)
   if (c.author) {
     await notify(null, [{
@@ -479,18 +479,48 @@ export async function moderateComment(event: SocialEvent, ctx: SocialContext, id
       data: { action, label: 'comment', on: { collection: t.target_collection, item: t.target_item }, comment: c.id, snippet: action === 'unhide' ? null : await snippetFrom(c.body) },
     }])
   }
-  return { comment: await viewOf(ctx, row, !!t.locked) }
+  return { row, locked: !!t.locked }
+}
+
+/** A comment of this app by id (server account), or null. */
+export async function readAppComment(id: string): Promise<CommentRow | null> {
+  if (!isSocialId(id)) return null
+  const c = await byId<CommentRow>(sys(), 'comments', id, COMMENT_FIELDS)
+  if (!c || !(await ownThread(c.thread))) return null
+  return c
+}
+
+/** Moderator hide / unhide / remove, logged, with the author told (never who did it). Not on your own, or across a block. */
+export async function moderateComment(event: SocialEvent, ctx: SocialContext, id: string, input: { action?: unknown, reason?: unknown }) {
+  await requireModeratorAction(event, ctx)
+  const action = input.action as ModerateAction
+  if (!['hide', 'unhide', 'remove'].includes(action)) throw createError({ statusCode: 400, message: 'Unknown action.' })
+  const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 500) || null : null
+  if (!isSocialId(id)) throw createError({ statusCode: 404, message: 'Comment not found' })
+  const c = await byId<CommentRow>(sys(), 'comments', id, COMMENT_FIELDS)
+  if (!c) throw createError({ statusCode: 404, message: 'Comment not found' })
+  await threadTargetOf(c.thread)
+  assertNoConflict(ctx, c.author)
+  const { row, locked } = await applyCommentModeration(ctx.me, c, action, reason)
+  return { comment: await viewOf(ctx, row, locked) }
 }
 
 /** Moderator lock / unlock: a locked thread takes no new comments (moderators excepted). */
 export async function lockThread(event: SocialEvent, ctx: SocialContext, input: { collection?: unknown, item?: unknown, locked?: unknown }) {
-  await requireModerator(ctx)
+  await requireModeratorAction(event, ctx)
   if (typeof input.locked !== 'boolean') throw createError({ statusCode: 400, message: '`locked` must be true or false.' })
-  const { collection, item } = await requireTarget(event, ctx, input, 'comments')
-  const thread = await getOrCreateThread(collection, item)
-  if (!!thread.locked !== input.locked) {
-    await touchThread(thread.id, { locked: input.locked })
-    await logModeration({ moderator: ctx.me, action: input.locked ? 'lock' : 'unlock', target: { collection, item }, targetAuthor: null, reason: null, snapshot: null })
-  }
+  const { def, collection, item } = await requireTarget(event, ctx, input, 'comments')
+  const owner = def.owners ? ((await def.owners([item])).get(item) ?? null) : null
+  assertNoConflict(ctx, owner)
+  await setThreadLock(ctx.me, collection, item, input.locked, owner)
   return summarizeOne(event, ctx, collection, item)
+}
+
+/** Lock or unlock a target's thread as `moderator`, logged when it changes. Returns whether it changed. */
+export async function setThreadLock(moderator: string, collection: string, item: string, locked: boolean, owner: string | null) {
+  const thread = await getOrCreateThread(collection, item)
+  if (!!thread.locked === locked) return false
+  await touchThread(thread.id, { locked })
+  await logModeration({ moderator, action: locked ? 'lock' : 'unlock', target: { collection, item }, targetAuthor: owner, reason: null, snapshot: null })
+  return true
 }

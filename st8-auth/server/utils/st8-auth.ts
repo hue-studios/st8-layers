@@ -21,6 +21,8 @@ export function useSt8Auth() {
     /** Collections another app's join link may name in `via` (memberships.joined_via). */
     joinViaCollections: ((config.st8Auth.joinViaCollections ?? []) as string[]).filter((c) => /^[a-z_]{1,40}$/.test(c)),
     directusUrl: String(config.public.directusUrl).replace(/\/$/, ''),
+    /** Dates shown to members (a suspension's end) are in this zone. */
+    timeZone: String(config.st8Auth.timeZone || 'America/New_York'),
     /** Origin a reset link for `target` should use, or null if `target` isn't whitelisted. */
     appOrigin(target: string): string | null {
       const apps = (config.st8Auth.apps ?? {}) as Record<string, string>

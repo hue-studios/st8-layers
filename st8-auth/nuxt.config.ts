@@ -26,6 +26,8 @@ export default defineNuxtConfig({
        * recorded on the new membership as `joined_via`. Empty = `via` is ignored.
        */
       joinViaCollections: ['events'] as string[],
+      /** Time zone for dates shown to members (a suspension's end). */
+      timeZone: 'America/New_York',
       /** Shared secret for POST /api/auth/sync-access (the Directus memberships Flow). Unset = endpoint disabled. */
       syncSecret: '',
       /** Transactional email. Unset key = sending is a logged no-op. SENDGRID_* env vars also work. */

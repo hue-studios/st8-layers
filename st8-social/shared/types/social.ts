@@ -108,7 +108,7 @@ export interface ThreadDelta {
   cursor: string | null
 }
 
-export type NotificationType = 'reply' | 'mention' | 'reaction' | 'connection_request' | 'connection_accepted' | 'intro' | 'moderation'
+export type NotificationType = 'reply' | 'mention' | 'reaction' | 'connection_request' | 'connection_accepted' | 'intro' | 'moderation' | 'report'
 
 export interface SocialNotification {
   id: string
@@ -168,4 +168,105 @@ export interface SocialTeaser {
   reactions: ReactionKey[]
   /** The viewer is an active member of that app. */
   member: boolean
+}
+
+// ── Moderation queue (Phase 8; moderators and admins only) ─────────────────────────────────────────────────────────
+
+/** What a moderator can do from the queue; which ones apply depends on the target and its state. */
+export type QueueAction = 'dismiss' | 'hide' | 'unhide' | 'remove' | 'lock' | 'unlock' | 'clear' | 'refer' | 'suspend'
+
+/** GET /api/social/moderation/summary: whether the viewer moderates here, and how many targets wait. */
+export interface ModerationSummary {
+  canModerate: boolean
+  role: 'member' | 'contributor' | 'moderator' | 'admin' | null
+  /** Targets with pending reports. */
+  pending: number
+}
+
+export interface QueueReport {
+  id: string
+  reason: ReportReason
+  details: string | null
+  status: 'pending' | 'actioned' | 'dismissed'
+  createdAt: string
+  /** Null when the reporter's account is gone. */
+  reporter: SocialPerson | null
+  /** The reporter's reports over the auto-hide history window. */
+  history: { filed: number, actioned: number, dismissed: number }
+  /** Whether it counts toward the auto-hide; `why` says why not ("New member", "Often dismissed"). */
+  counts: boolean
+  why: string | null
+}
+
+/** The reported thing as it was reported (its snapshot), reduced to what the queue shows. */
+export interface QueuePreview {
+  kind: string
+  title: string | null
+  text: string | null
+  /** Short facts: "3 images", "Fri, Oct 10 · 6:00 pm", a link. */
+  meta: string[]
+}
+
+/** One reported target, with its reports. */
+export interface QueueItem {
+  key: string
+  collection: string
+  item: string
+  /** "comment", "post", "event", "profile" */
+  label: string
+  /** Its state now: `gone` when it no longer exists, `live` for targets this app can't hide (events). */
+  state: 'published' | 'hidden' | 'removed' | 'deleted' | 'gone' | 'live'
+  autoHidden: boolean
+  /** Comments on it (or, for a comment, on its thread) are closed. */
+  locked: boolean
+  owner: SocialPerson | null
+  /** The owner's membership here, for the suspend action. */
+  ownerMembership: { role: string, status: 'active' | 'suspended' } | null
+  preview: QueuePreview | null
+  link: string | null
+  reports: QueueReport[]
+  pending: number
+  firstAt: string
+  lastAt: string
+  /** The last review (Reviewed tab). */
+  review: { status: 'actioned' | 'dismissed', action: string | null, at: string | null, by: SocialPerson | null } | null
+  /** What this viewer may do now; empty with `blocked` saying why (their own, a block, rank). */
+  actions: QueueAction[]
+  blocked: string | null
+}
+
+export interface QueuePage {
+  items: QueueItem[]
+  /** Cursor for the next page (Reviewed tab), or null. */
+  next: string | null
+}
+
+export interface ModerationLogEntry {
+  id: string
+  action: string
+  /** Null = automatic (reports, or a suspension that ran out). */
+  moderator: SocialPerson | null
+  target: { collection: string, item: string, label: string, link: string | null }
+  author: SocialPerson | null
+  reason: string | null
+  createdAt: string
+}
+
+export interface ModerationLogPage {
+  items: ModerationLogEntry[]
+  next: string | null
+}
+
+export interface SuspendedMember {
+  person: SocialPerson
+  role: string
+  until: string | null
+  reason: string | null
+  /** When and by whom (null = unknown, e.g. made directly in Directus before Phase 8). */
+  since: string | null
+  by: SocialPerson | null
+  /** Posts and comments hidden with the suspension (restorable). */
+  hidden: number
+  /** Whether this viewer may restore them (rank). */
+  canRestore: boolean
 }

@@ -7,6 +7,22 @@ import type { SecureSessionData, User, UserSession } from '#auth-utils'
 const REFRESH_EARLY_MS = 60_000 // refresh when less than a minute is left
 const SLIDE_THROTTLE_MS = 24 * 60 * 60 * 1000 // slide the session window at most once a day
 const RECHECK_MS = 5 * 60 * 1000 // re-read membership + user at most every 5 minutes (heartbeat)
+const MEMBERSHIP_RECHECK_MS = 30_000 // re-read the membership at most every 30 s per member (getSessionMembership)
+
+/**
+ * When each member's membership was last read in this server instance (getSessionMembership). Kept here, not in the
+ * session: re-sealing the cookie on every check would race token rotation (see getSessionMembership).
+ */
+const membershipSeen = new Map<string, { membership: SessionMembership | null, at: number }>()
+/** Forget a member's last read, so this instance re-reads their membership at their next request (a suspension). */
+export function forgetMembership(userId: string) {
+  membershipSeen.delete(userId)
+}
+function rememberMembership(userId: string, membership: SessionMembership | null) {
+  const now = Date.now()
+  if (membershipSeen.size > 5000) for (const [k, v] of membershipSeen) if (now - v.at >= MEMBERSHIP_RECHECK_MS) membershipSeen.delete(k)
+  membershipSeen.set(userId, { membership, at: now })
+}
 
 /**
  * In-process single-flight for token refresh, keyed by the refresh token. Directus rotates refresh tokens in `json`
@@ -100,13 +116,20 @@ export async function endSession(event: AuthEvent) {
   await clearUserSession(event)
 }
 
+/** "Your Insider membership is suspended until Nov 1, 2026." */
+export function suspendedMessage(until: string | null | undefined) {
+  const { appName, timeZone } = useSt8Auth()
+  const date = until ? new Date(until).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone }) : null
+  return `Your ${appName} membership is suspended${date ? ` until ${date}` : ''}.`
+}
+
 /** Re-read the app membership; a suspended one ends the session (401). Returns the membership. */
 async function assertMembership(event: AuthEvent, userId: string) {
-  const { app, appName } = useSt8Auth()
-  const membership = await readMembership(userId, app)
+  const { app } = useSt8Auth()
+  const membership = await currentMembership(userId, app)
   if (membership?.status === 'suspended') {
     await endSession(event)
-    throw createError({ statusCode: 401, data: { reason: 'suspended' }, message: `Your ${appName} membership is suspended.` })
+    throw createError({ statusCode: 401, data: { reason: 'suspended', until: membership.until ?? null }, message: suspendedMessage(membership.until) })
   }
   return membership
 }
@@ -156,20 +179,24 @@ export async function getValidToken(event: AuthEvent, opts: { force?: boolean } 
       checked_at: Date.now(),
     },
   })
+  rememberMembership(session.user.id, membership)
   return fresh.access_token
 }
 
 /**
- * Heartbeat work: a valid token, plus (at most every few minutes) a fresh read of the membership and the session user,
+ * Heartbeat work: a valid token, the membership re-check (every 30 s), plus (at most every few minutes) a fresh read of
+ * the membership and the session user,
  * so a suspension, a new avatar or a profile change reaches the session without signing in again.
  */
 export async function revalidateSession(event: AuthEvent) {
   await getValidToken(event)
+  await getSessionMembership(event) // the 30 s membership re-check: a suspension ends the session here too
   const session = await requireSecureSession(event)
   if (Date.now() - (session.secure.checked_at ?? 0) < RECHECK_MS) return session.user
   const membership = await assertMembership(event, session.user.id)
   const user = await fetchSessionUser(session.user.id)
   await patchSession(event, { user, secure: { ...session.secure, membership, checked_at: Date.now() } })
+  rememberMembership(session.user.id, membership)
   return user
 }
 
@@ -196,11 +223,47 @@ export async function getCurrentUserId(event: AuthEvent): Promise<string> {
  */
 export async function getUserClient(event: AuthEvent): Promise<{ me: string, directus: ReturnType<typeof getUserDirectus> }> {
   const token = await getValidToken(event)
-  return { me: await getCurrentUserId(event), directus: getUserDirectus(token) }
+  const directus = getUserDirectus(token)
+  // A suspension takes this app's policies away at once, while the session's copy of the membership is up to 30 s old
+  // for reads. So when Directus refuses the member, re-read the membership: a suspension then ends the session with a
+  // 401 (`reason: 'suspended'`) instead of the refusal surfacing as an error. Other refusals pass through unchanged.
+  const request = directus.request.bind(directus)
+  directus.request = (async (options: Parameters<typeof request>[0]) => {
+    try {
+      return await request(options)
+    } catch (err) {
+      const { status } = directusError(err)
+      if (status === 401 || status === 403) await getSessionMembership(event, { fresh: true })
+      throw err
+    }
+  }) as typeof directus.request
+  return { me: await getCurrentUserId(event), directus }
 }
 
-/** The signed-in user's app membership from the session (re-read on refresh and heartbeat). */
-export async function getSessionMembership(event: AuthEvent) {
-  const session = await requireSecureSession(event)
-  return session.secure.membership
+/**
+ * The signed-in user's app membership, re-read from Directus on every write and when the session's copy is more than
+ * 30 s old, so a suspension ends the session (401, `data.reason = 'suspended'`) at the member's next write, or within
+ * 30 s for reads (sooner if Directus refuses the member's token: getUserClient re-checks then). Every write path in the
+ * ST8 layers goes through it, and so does every /api request with a session (server/middleware/st8-membership.ts).
+ * Once per request; `fresh` skips the 30 s.
+ */
+export async function getSessionMembership(event: AuthEvent, opts: { fresh?: boolean } = {}) {
+  const cached = event.context.st8Membership as { promise: Promise<SessionMembership | null>, fresh: boolean } | undefined
+  if (cached && (cached.fresh || !opts.fresh)) return cached.promise
+  // Writes always re-read it (they're few and rate-limited), so a suspended member can't write even in the 30 s.
+  const fresh = !!opts.fresh || !['GET', 'HEAD', 'OPTIONS'].includes(event.method)
+  const check = (async () => {
+    const session = await requireSecureSession(event)
+    const userId = session.user.id
+    const seen = membershipSeen.get(userId)
+    if (!fresh && seen && Date.now() - seen.at < MEMBERSHIP_RECHECK_MS) return seen.membership
+    const membership = await assertMembership(event, userId)
+    rememberMembership(userId, membership)
+    // Re-seal only when it changed (a new role): a re-seal from this request's copy could otherwise write back a
+    // refresh token a parallel request has just rotated, and end the session at the next refresh.
+    if (JSON.stringify(membership) !== JSON.stringify(session.secure.membership)) await patchSession(event, { secure: { ...session.secure, membership } })
+    return membership
+  })()
+  event.context.st8Membership = { promise: check, fresh }
+  return check
 }

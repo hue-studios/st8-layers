@@ -18,7 +18,15 @@ export interface NotificationData {
   on?: { collection: string, item: string }
   comment?: string
   reaction?: ReactionKey
-  action?: 'hide' | 'unhide' | 'remove' | 'auto_hide'
+  /**
+   * moderation: what happened to the recipient's item (`clear`: their profile's content), their report (`report_*`),
+   * or their membership (`unsuspend`).
+   */
+  action?: 'hide' | 'unhide' | 'remove' | 'auto_hide' | 'clear' | 'report_actioned' | 'report_dismissed' | 'unsuspend'
+  /** report (to moderators): the target's first report, an automatic hide, or a referral to admins. */
+  report?: 'first' | 'auto_hide' | 'refer'
+  /** report: the first report's reason. */
+  reason?: string
   /** Another member the notification is about (an intro: the person you were introduced to). Resolved for the list. */
   with?: string
   /** How it came about, for types registered by other layers (e.g. `invite` for a connection made by an invite link). */
@@ -137,7 +145,20 @@ function textOf(n: NotificationRow, people: Map<string, SocialPerson>): string {
         unhide: `A moderator restored your ${what}.`,
         remove: `A moderator removed your ${what}.`,
         auto_hide: `Your ${what} was hidden after several reports, until a moderator reviews it.`,
+        clear: `A moderator removed content from your ${what}.`,
+        report_actioned: `A moderator reviewed the ${what} you reported and took action. Thank you.`,
+        report_dismissed: `A moderator reviewed the ${what} you reported and left it up.`,
+        unsuspend: `Your ${useSt8Auth().appName} membership is active again.`,
       }[d.action ?? 'hide']
+    }
+    case 'report': {
+      const what = d.label ?? 'item'
+      const reason = d.reason ? ` (${d.reason.replace(/_/g, ' ')})` : ''
+      return {
+        first: `A ${what} was reported${reason}. Review it in the moderation queue.`,
+        auto_hide: `A ${what} was hidden after several reports. Review it in the moderation queue.`,
+        refer: `A moderator referred a reported ${what} to the admins.`,
+      }[d.report ?? 'first']
     }
     case 'connection_request':
       return 'wants to connect'
@@ -157,7 +178,10 @@ function linkOf(n: NotificationRow, people: Map<string, SocialPerson>): string |
       return null
     }
   }
-  const on = n.data?.on ?? { collection: n.target_collection, item: n.target_item }
+  // Moderators: the queue, opened on the target. A reporter whose report led to action, and a restored member: nowhere.
+  if (n.type === 'report') return `${useSt8Social().moderationPath}?target=${encodeURIComponent(`${n.target_collection}:${n.target_item}`)}`
+  if (n.type === 'moderation' && (n.data?.action === 'report_actioned' || n.data?.action === 'unsuspend')) return null
+    const on = n.data?.on ?? { collection: n.target_collection, item: n.target_item }
   const def = socialTarget(on.collection)
   try {
     return def?.link?.(on.item, { comment: n.data?.comment }) ?? null

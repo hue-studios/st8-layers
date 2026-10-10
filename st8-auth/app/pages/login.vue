@@ -9,6 +9,7 @@ const notice = computed(() => {
   if (route.query.exists) return 'You already have a Southern Tier 8 account. Sign in with its password to join, or reset it.'
   if (route.query.reset) return 'Your password is updated. Sign in with the new one.'
   if (route.query.invited) return 'Your account is ready. Sign in to continue.'
+  if (route.query.suspended) return `Your ${appName || 'ST8'} membership is suspended, so you were signed out. Contact Southern Tier 8 if you think this is a mistake.`
   return ''
 })
 </script>
