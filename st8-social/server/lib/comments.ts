@@ -12,6 +12,12 @@ import { findThread, getOrCreateThread, ownThread, requireTarget, summarizeOne }
 // here. Every write recounts and bumps the thread version, which is what realtime subscribers watch.
 
 export const COMMENT_FIELDS = ['id', 'thread', 'parent', 'root', 'depth', 'author', 'body', 'mentions', 'status', 'hidden_by', 'hidden_reason', 'edited_at', 'reply_count', 'reaction_counts', 'date_created', 'date_updated']
+/**
+ * What reads with the member's token ask for: everything but `hidden_by`, so a member's policy never needs to expose who
+ * hid a comment. Whether a hidden comment was hidden by a person or by the report threshold is looked up with the
+ * server account (toViews).
+ */
+const MEMBER_FIELDS = COMMENT_FIELDS.filter((f) => f !== 'hidden_by')
 
 export interface CommentRow {
   id: string
@@ -23,7 +29,8 @@ export interface CommentRow {
   body: string | null
   mentions: string[] | null
   status: Exclude<CommentStatus, 'unavailable'>
-  hidden_by: string | null
+  /** Absent on rows read with the member's token. */
+  hidden_by?: string | null
   hidden_reason: string | null
   edited_at: string | null
   reply_count: number | null
@@ -84,7 +91,8 @@ interface ViewOptions {
 export async function toViews(ctx: SocialContext, list: CommentRow[], opts: ViewOptions): Promise<SocialComment[]> {
   if (!list.length) return []
   const ids = list.map((c) => c.id)
-  const [isMod, mine, theirs] = await Promise.all([
+  const unknownHider = list.filter((c) => c.status === 'hidden' && c.hidden_by === undefined).map((c) => c.id)
+  const [isMod, mine, theirs, hiders] = await Promise.all([
     ctx.isModerator(),
     rows<{ target_item: string, reaction: ReactionKey }>(ctx.user, 'reactions', {
       fields: ['target_item', 'reaction'],
@@ -98,8 +106,12 @@ export async function toViews(ctx: SocialContext, list: CommentRow[], opts: View
           limit: -1,
         })
       : Promise.resolve([]),
+    unknownHider.length
+      ? rows<{ id: string, hidden_by: string | null }>(sys(), 'comments', { fields: ['id', 'hidden_by'], filter: { id: { _in: unknownHider } }, limit: -1 })
+      : Promise.resolve([]),
   ])
   const myReaction = new Map(mine.map((r) => [r.target_item, r.reaction]))
+  const hiddenBy = new Map(hiders.map((h) => [h.id, h.hidden_by]))
 
   const replyToAuthor = new Map<string, string>()
   for (const c of list) {
@@ -136,7 +148,7 @@ export async function toViews(ctx: SocialContext, list: CommentRow[], opts: View
       body: tombstone ? '' : (c.body ?? ''),
       mentions: tombstone ? [] : (Array.isArray(c.mentions) ? c.mentions : []).map((id) => people.get(id)).filter((p): p is SocialPerson => !!p),
       status: c.status,
-      autoHidden: c.status === 'hidden' && !c.hidden_by,
+      autoHidden: c.status === 'hidden' && !(c.hidden_by === undefined ? hiddenBy.get(c.id) : c.hidden_by),
       createdAt: c.date_created,
       editedAt: c.edited_at,
       replyCount: replies,
@@ -183,7 +195,7 @@ export async function readThreadPage(event: SocialEvent, ctx: SocialContext, ref
   const limit = Math.min(Math.max(opts.limit, 1), PAGE_MAX)
   const [top, topCount] = await Promise.all([
     rows<CommentRow>(ctx.user, 'comments', {
-      fields: COMMENT_FIELDS,
+      fields: MEMBER_FIELDS,
       filter: and(topFilter(ctx, thread.id), opts.before ? { date_created: { _lt: opts.before } } : {}),
       sort: ['-date_created', '-id'],
       limit: limit + 1,
@@ -194,7 +206,7 @@ export async function readThreadPage(event: SocialEvent, ctx: SocialContext, ref
   const roots = pageTop.map((c) => c.id)
   const [replies, nodes] = roots.length
     ? await Promise.all([
-        rows<CommentRow>(ctx.user, 'comments', { fields: COMMENT_FIELDS, filter: and({ thread: { _eq: thread.id }, root: { _in: roots } }, notBlocked('author', ctx.blocked)), sort: ['date_created'], limit: -1 }),
+        rows<CommentRow>(ctx.user, 'comments', { fields: MEMBER_FIELDS, filter: and({ thread: { _eq: thread.id }, root: { _in: roots } }, notBlocked('author', ctx.blocked)), sort: ['date_created'], limit: -1 }),
         structureOf(roots),
       ])
     : [[], new Map<string, Node>()]
@@ -234,7 +246,7 @@ export async function readThreadDelta(event: SocialEvent, ctx: SocialContext, re
   const inLoaded = roots.length ? { _or: [{ depth: { _eq: 0 } }, { root: { _in: roots } }] } : { depth: { _eq: 0 } }
   const [changed, present, topCount] = await Promise.all([
     rows<CommentRow>(ctx.user, 'comments', {
-      fields: COMMENT_FIELDS,
+      fields: MEMBER_FIELDS,
       filter: and(
         { thread: { _eq: thread.id } },
         { _or: [{ date_created: { _gte: opts.since } }, { date_updated: { _gte: opts.since } }] },
@@ -278,7 +290,7 @@ export async function readGroup(event: SocialEvent, ctx: SocialContext, groupId:
 
   const root = head.depth ? head.root! : head.id
   const [list, nodes] = await Promise.all([
-    rows<CommentRow>(ctx.user, 'comments', { fields: COMMENT_FIELDS, filter: and({ root: { _eq: root } }, notBlocked('author', ctx.blocked)), sort: ['date_created'], limit: -1 }),
+    rows<CommentRow>(ctx.user, 'comments', { fields: MEMBER_FIELDS, filter: and({ root: { _eq: root } }, notBlocked('author', ctx.blocked)), sort: ['date_created'], limit: -1 }),
     structureOf([root]),
   ])
   const members = list.filter((c) => groupOf(c, nodes) === groupId).slice(-GROUP_MAX)

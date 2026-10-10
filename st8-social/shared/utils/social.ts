@@ -68,6 +68,18 @@ export function normalizeCommentBody(value: unknown): string {
     .trim()
 }
 
+/** A stored body as an editor shows it: each `<@id>` as "@Name" (people it doesn't know as "@member"). */
+export function mentionDisplay(body: string, people: { id: string, name: string }[]): string {
+  return body.replace(MENTION_TOKEN, (_, id: string) => `@${people.find((p) => p.id === id.toLowerCase())?.name ?? 'member'}`)
+}
+
+/** An editor's text as stored: each picked person's "@Name" becomes `<@id>` (longest names first). */
+export function mentionBody(display: string, picked: { id: string, name: string }[]): string {
+  let out = display
+  for (const p of [...picked].sort((a, b) => b.name.length - a.name.length)) out = out.split(`@${p.name}`).join(`<@${p.id}>`)
+  return out
+}
+
 /** Visible length of a body: a mention token counts as a short name would. */
 export const bodyLength = (body: string) => body.replace(MENTION_TOKEN, '@mention').length
 

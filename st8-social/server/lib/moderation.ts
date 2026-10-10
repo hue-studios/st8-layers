@@ -1,12 +1,13 @@
 import { updateItems } from '@directus/sdk'
 import { REPORT_DETAILS_MAX, isReportReason } from '../../shared/utils/social'
-import { type SocialContext, type SocialEvent, byId, count, create, isUniqueViolation, rows, socialRateLimit, sys, update, withLock } from './core'
+import { type SocialContext, type SocialEvent, byId, count, create, isUniqueViolation, readJson, requireModerator, rows, socialRateLimit, sys, update, withLock } from './core'
 import { touchThread } from './counters'
 import { notify, snippetFrom } from './notifications'
-import { requireTarget } from './threads'
+import { getOrCreateThread, requireTarget, summarizeOne } from './threads'
 
 // Reports, the moderation log and auto-hide (docs/go-live-plan.md §5, "Moderation"). The Studio is the moderation
-// console (reports queue, moderation_log); the app's moderators act through moderateComment / lockThread.
+// console (reports queue, moderation_log); the app's moderators act through moderateComment / lockThread, and on a
+// host's own items (posts) through moderateTarget, when the host registered a `moderate` hook.
 
 type LogAction = 'hide' | 'unhide' | 'remove' | 'lock' | 'unlock' | 'dismiss_report' | 'suspend_user' | 'auto_hide'
 
@@ -67,8 +68,73 @@ export async function createReport(event: SocialEvent, ctx: SocialContext, input
     throw err
   }
 
-  const autoHidden = collection === 'comments' ? await maybeAutoHide(item) : false
+  const autoHidden = collection === 'comments' ? await maybeAutoHide(item) : def.moderate ? await maybeAutoHideTarget(collection, item) : false
   return { ok: true, autoHidden }
+}
+
+/** Any change to a target, announced to everyone viewing it: its thread's version moves (made if needed). */
+export async function signalTarget(collection: string, item: string) {
+  const thread = await getOrCreateThread(collection, item)
+  await touchThread(thread.id)
+}
+
+const ALLOWED: Record<SocialModerationAction, string[]> = { hide: ['published'], unhide: ['hidden'], remove: ['published', 'hidden'] }
+
+/**
+ * Hide, unhide or remove a host item through its `moderate` hook: checked, applied by the host, logged with a snapshot,
+ * pending reports closed, the owner told (never by whom), and the thread version bumped so every open view refetches.
+ * `moderator` null = the auto-hide threshold.
+ */
+async function applyTargetModeration(collection: string, item: string, action: SocialModerationAction, moderator: string | null, reason: string | null, pending?: number) {
+  const def = socialTarget(collection)!
+  const state = await def.moderate!.state(item)
+  if (!state) throw createError({ statusCode: 404, message: 'Not found' })
+  if (!ALLOWED[action].includes(state.status)) throw createError({ statusCode: 409, message: `This ${def.label} is ${state.status}.` })
+  const snapshot = { ...((await def.snapshot?.(item)) ?? {}), status: state.status, ...(pending ? { reports: pending } : {}) }
+  await def.moderate!.apply(item, action, { moderator, reason })
+  await logModeration({ moderator, action: moderator ? action : 'auto_hide', target: { collection, item }, targetAuthor: state.owner, reason, snapshot })
+  // An automatic hide keeps its reports pending: they are the moderators' queue.
+  if (moderator) await resolveReports({ collection, item }, moderator, action === 'unhide' ? { status: 'dismissed', action: 'none' } : { status: 'actioned', action })
+  if (state.owner) {
+    await notify(null, [{
+      recipient: state.owner,
+      actor: null,
+      type: 'moderation',
+      target: { collection, item },
+      data: { action: moderator ? action : 'auto_hide', label: def.label, on: { collection, item } },
+    }])
+  }
+  await signalTarget(collection, item)
+}
+
+async function maybeAutoHideTarget(collection: string, item: string): Promise<boolean> {
+  const threshold = useSt8Social().autoHideReports
+  return withLock(`target:${collection}:${item}`, async () => {
+    const pending = await count(sys(), 'reports', { app: { _eq: useSt8Social().app }, target_collection: { _eq: collection }, target_item: { _eq: item }, status: { _eq: 'pending' } })
+    if (pending < threshold) return false
+    const state = await socialTarget(collection)!.moderate!.state(item)
+    if (state?.status !== 'published') return false
+    await applyTargetModeration(collection, item, 'hide', null, `Hidden automatically after ${pending} reports`, pending)
+    return true
+  })
+}
+
+/** Moderators: `{ collection, item, action: hide | unhide | remove, reason? }` on a host item with a `moderate` hook. */
+export async function moderateTarget(event: SocialEvent, ctx: SocialContext) {
+  await requireModerator(ctx)
+  const input = await readJson<{ collection: string, item: string, action: string, reason: string }>(event)
+  const def = socialTarget(input.collection)
+  if (!def?.moderate) throw createError({ statusCode: 400, message: 'Unknown target.' })
+  const action = input.action as SocialModerationAction
+  if (!['hide', 'unhide', 'remove'].includes(action)) throw createError({ statusCode: 400, message: 'Unknown action.' })
+  const item = typeof input.item === 'number' ? String(input.item) : input.item
+  if (typeof item !== 'string' || !item || item.length > 64) throw createError({ statusCode: 400, message: 'Unknown target.' })
+  // A moderator must be able to see it (hidden items included, by their policy).
+  const visible = await def.visible([item], { event, viewer: ctx.me })
+  if (!visible.has(item)) throw createError({ statusCode: 404, message: 'Not found' })
+  const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 500) || null : null
+  await withLock(`target:${def.collection}:${item}`, () => applyTargetModeration(def.collection, item, action, ctx.me, reason))
+  return { ok: true, status: (await def.moderate.state(item))?.status ?? null, thread: await summarizeOne(event, ctx, def.collection, item).catch(() => null) }
 }
 
 async function maybeAutoHide(commentId: string): Promise<boolean> {

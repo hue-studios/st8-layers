@@ -126,16 +126,19 @@ function textOf(n: NotificationRow, people: Map<string, SocialPerson>): string {
     case 'reply':
       return d.kind === 'comment' ? `commented on your ${label}` : 'replied to your comment'
     case 'mention':
-      return 'mentioned you in a comment'
+      // In a comment, or in the target itself (a post's body).
+      return n.target_collection === 'comments' ? 'mentioned you in a comment' : `mentioned you in a ${label}`
     case 'reaction':
       return `reacted to your ${label}`
-    case 'moderation':
+    case 'moderation': {
+      const what = d.label ?? 'comment'
       return {
-        hide: 'A moderator hid your comment. Only you can see it now.',
-        unhide: 'A moderator restored your comment.',
-        remove: 'A moderator removed your comment.',
-        auto_hide: 'Your comment was hidden after several reports, until a moderator reviews it.',
+        hide: `A moderator hid your ${what}. Only you can see it now.`,
+        unhide: `A moderator restored your ${what}.`,
+        remove: `A moderator removed your ${what}.`,
+        auto_hide: `Your ${what} was hidden after several reports, until a moderator reviews it.`,
       }[d.action ?? 'hide']
+    }
     case 'connection_request':
       return 'wants to connect'
     case 'connection_accepted':

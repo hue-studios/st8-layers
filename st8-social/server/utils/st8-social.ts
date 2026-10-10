@@ -59,6 +59,25 @@ export interface SocialTargetDefinition {
   snapshot?: (item: string) => Promise<Record<string, unknown> | null> | Record<string, unknown> | null
   /** The in-app path that shows the item; `comment` asks for that comment to be opened. Null = no page. */
   link?: (item: string, opts: { comment?: string }) => string | null
+  /**
+   * Moderation of the item itself (comments are moderated by the layer). With it, moderators can hide, unhide and
+   * remove the item through `POST /api/social/targets/moderate`, and `autoHideReports` distinct pending reports hide it.
+   * The layer checks the transition, logs it (with `snapshot`), closes pending reports, tells the owner (never who did
+   * it) and bumps the thread version so open views refetch; the host only changes its own row.
+   */
+  moderate?: SocialTargetModeration
+}
+
+export type SocialModerationAction = 'hide' | 'unhide' | 'remove'
+
+export interface SocialTargetModeration {
+  /** The item's moderation state now, or null when it doesn't exist. */
+  state: (item: string) => Promise<{ status: 'published' | 'hidden' | 'removed', owner: string | null } | null>
+  /**
+   * Apply the action to the host's row. `moderator` is null for an automatic hide. For `remove` the host should clear
+   * the content (a tombstone) and delete what only the item used (files).
+   */
+  apply: (item: string, action: SocialModerationAction, info: { moderator: string | null, reason: string | null }) => Promise<void>
 }
 
 const registry = new Map<string, SocialTargetDefinition>()

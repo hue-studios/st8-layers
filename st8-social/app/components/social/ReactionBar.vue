@@ -17,8 +17,11 @@ const props = withDefaults(defineProps<{
   collection: string
   item: string | number
   state?: ReactionState | null
-  /** `bar`: summary line above a full-width button. `compact`: one row. `text`: a small text button (comments). */
-  variant?: 'bar' | 'compact' | 'text'
+  /**
+   * `bar`: summary line above a full-width button. `compact`: one row. `text`: a small text button (comments).
+   * `action`: the button alone, for an action row; pair it with SocialReactionSummary.
+   */
+  variant?: 'bar' | 'compact' | 'text' | 'action'
   disabled?: boolean
 }>(), { state: null, variant: 'bar', disabled: false })
 const emit = defineEmits<{ change: [state: ReactionState] }>()
@@ -146,10 +149,10 @@ const signedIn = computed(() => !!user.value)
 </script>
 
 <template>
-  <div :class="cn(variant === 'bar' ? 'flex flex-col' : 'flex items-center gap-2')">
+  <div :class="cn(variant === 'bar' ? 'flex flex-col' : variant === 'action' ? 'flex' : 'flex items-center gap-2')">
     <!-- Summary -->
     <button
-      v-if="variant !== 'text' && current.reactionTotal"
+      v-if="variant !== 'text' && variant !== 'action' && current.reactionTotal"
       type="button"
       :class="cn('flex min-w-0 items-center gap-1.5 text-xs opacity-80 hover:underline', variant === 'bar' && 'py-2')"
       @click="reactorsOpen = true"
@@ -174,6 +177,7 @@ const signedIn = computed(() => !!user.value)
               ? 'h-auto px-0 py-0 text-[11px] font-bold tracking-wider text-muted-foreground uppercase hover:no-underline'
               : 'text-xs font-bold tracking-widest uppercase',
             variant === 'bar' && 'w-full border-t border-glass-border',
+            variant === 'action' && 'w-full',
             mine && 'text-brand',
           )"
           @pointerenter="onEnter"

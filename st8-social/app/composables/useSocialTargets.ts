@@ -5,10 +5,15 @@ import type { SocialViewer, ThreadSummary } from '../../shared/types/social'
 // and one realtime subscription covers every target in view (threads: id, version). A version change refetches that
 // target's summary, or tells the open thread to fetch its delta (onThreadChange). Client-only: counts render after
 // hydration.
+//
+// A target the server leaves out of a successful summary read is gone for this viewer (hidden, removed or deleted
+// since it was loaded): its summary is dropped and isGone(key) turns true, which is how lists learn that an item
+// vanished, since Directus can't tell a member about a row they can no longer read.
 
 type Listener = () => void
 
 const summaries = reactive(new Map<string, ThreadSummary>())
+const gone = reactive(new Set<string>())
 const viewer = ref<SocialViewer | null>(null)
 const refs = new Map<string, number>() // key → components showing it
 const listeners = new Map<string, Set<Listener>>() // key → open threads
@@ -33,6 +38,13 @@ async function flush() {
       const res = await $fetch<{ viewer: SocialViewer, threads: ThreadSummary[] }>('/api/social/threads', { query: { t: chunk } })
       viewer.value = res.viewer
       for (const s of res.threads) setSummary(s)
+      const returned = new Set(res.threads.map((s) => s.key))
+      for (const k of chunk) {
+        if (returned.has(k)) continue
+        summaries.delete(k)
+        versions.delete(k)
+        gone.add(k)
+      }
     } catch (err) {
       console.warn('[st8-social] summaries failed:', (err as Error)?.message ?? err)
     }
@@ -42,6 +54,7 @@ async function flush() {
 function setSummary(s: ThreadSummary) {
   versions.set(s.key, s.version)
   summaries.set(s.key, s)
+  gone.delete(s.key)
 }
 
 /** Keep the realtime subscription's filter equal to the targets in view (debounced; one subscription for all). */
@@ -69,7 +82,13 @@ function resubscribe() {
  * snapshot after a drop or sleep: anything may have changed while we weren't listening, so everything refetches.
  */
 function onThreads(event: string, data: Record<string, unknown>[] | string[]) {
-  if (event === 'delete') return
+  if (event === 'delete') {
+    // A thread was deleted with its target: refetch whatever showed it (the target is most likely gone too).
+    const ids = new Set((data as unknown[]).map((d) => String(typeof d === 'object' && d ? (d as { id?: unknown }).id : d)))
+    const keys = [...summaries.values()].filter((s) => s.thread && ids.has(s.thread) && refs.has(s.key)).map((s) => s.key)
+    if (keys.length) schedule(keys)
+    return
+  }
   const changed: string[] = []
   for (const row of data as Record<string, unknown>[]) {
     if (!row || typeof row !== 'object' || !row.target_collection) continue
@@ -124,6 +143,8 @@ export function useSocialTargets() {
     setSummary,
     setViewer: (v: SocialViewer) => (viewer.value = v),
     get: (key: string) => summaries.get(key),
+    /** The target vanished for this viewer since it was loaded (see above). */
+    isGone: (key: string) => gone.has(key),
     /** Refetch these targets' summaries. */
     refresh: (keys: string[]) => schedule(keys),
     /** An open thread takes over version bumps for its target (it fetches a delta, which includes the summary). */

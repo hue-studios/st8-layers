@@ -1,9 +1,12 @@
-import { activeMembers, resolvePeople } from '../lib/people'
+import { activeMembers, mentionable, resolvePeople } from '../lib/people'
 import { blockedWith, isUniqueViolation, limitRate, socialContext, withLock } from '../lib/core'
-import { markNotificationsRead, notify, withdrawNotifications } from '../lib/notifications'
+import { markNotificationsRead, notify, snippetOf, withdrawNotifications } from '../lib/notifications'
+import { signalTarget } from '../lib/moderation'
+import { deleteTargetSocial } from '../lib/targets'
 
-// The pieces of the st8-social server that other ST8 layers build on (st8-network: connections, blocks, intros,
-// invites). Host apps don't need them. Everything else stays in server/lib, out of the host's auto-import namespace.
+// The pieces of the st8-social server that other ST8 layers (st8-network: connections, blocks, intros, invites) and a
+// host's own social content (Insider: posts) build on. Everything else stays in server/lib, out of the host's
+// auto-import namespace.
 
 export const st8SocialServer = {
   /** The signed-in member with an active membership in this app (403 otherwise): `me`, their client, blocks. */
@@ -14,6 +17,14 @@ export const st8SocialServer = {
   resolvePeople,
   /** The ids that are active accounts with an active membership in this app. */
   activeMembers,
+  /** Of `ids`, the people this member may mention: active members here, not themselves, not blocked either way. */
+  mentionable,
+  /** A short plain excerpt of a body (mentions as names, markdown markers dropped) for notifications. */
+  snippetOf,
+  /** Announce a change to a target: its thread's version moves (made if needed), so open views refetch. */
+  signalTarget,
+  /** A target is gone for good: delete its conversation here (comments, reactions, notifications, thread). */
+  deleteTargetSocial,
   /** Create notifications (never to yourself, never across a block). */
   notify,
   /** Delete the unread notifications matching a filter. */
