@@ -10,6 +10,7 @@ public site with accounts). Nothing in it is app-specific; the host names the ap
 |---|---|
 | `server/utils/auth.ts` | `getValidToken` (refresh single-flight, a just-rotated refresh token answered from memory for a minute, sliding 30-day window, keeps a still-valid token when a refresh fails, 401 only when Directus rejects the refresh token), `getUserClient` (re-checks the membership when Directus refuses the member), `getCurrentUserId` (from the session, no `/users/me`), `getSessionMembership` (re-read on every write and every 30 s; see "Suspension"), `startSession` / `endSession`, `revalidateSession`, `refreshSessionUser`, `suspendedMessage` |
 | `server/utils/app-access.ts` | `ensureAppAccess(userId, app)` (open signup: creates the membership, then syncs), `syncAccess(userId)` (memberships → `app_role_policies` → `directus_access`), `readMembership`, `currentMembership` (lifts a suspension that has run out), `suspendMembership` / `restoreMembership`, `onMembershipChange` |
+| `server/plugins/st8-cached-pages.ts` | Pages with an `isr` / `swr` / `cache` route rule render signed out on the server (cookies dropped; nuxt-auth-utils loads the session in the browser after hydration), so a cached page never carries anyone's session |
 | `server/middleware/st8-membership.ts` | Every `/api` request with a session (not `/api/auth/*`) re-checks the membership through `getSessionMembership` |
 | `server/utils/profile.ts` | `fetchProfile` (`directus_users` + `profiles` with `industry.name/color`), `fetchSessionUser`, `ensureProfile` |
 | `server/utils/own-profile.ts` | The member's own profile: `readOwnProfile`, `applyProfileUpdate` (names and title with their token, the `profiles` row and county links with the server account; only the keys sent), `allowedProfileChoices`, avatars (`sniffImage`, `encodeAvatar`: sharp re-encode to WebP ≤1024px with no metadata, `uploadAvatarFile` into `st8Auth.avatarFolder`, `deleteOldAvatar`), and for hosts that show other people: `readProfileRecord`, `toMemberSummary`, `toMemberProfile`, `requireActiveMember`, `isUuid` |
@@ -78,8 +79,9 @@ The layer expects the host to provide:
   no key = emails are a logged no-op), `public.st8Auth.brandColor`, `public.st8Auth.publicRoutes` /
 `protectedRoutes`, `public.st8Auth.postJoinPath` (see "Hooks" below).
 - **Public sites:** with `defaultAccess: 'public'`, an ended session leaves the visitor signed out on the page they're
-  reading (only a suspension goes to sign-in, for its notice), and so does signing out. Pages cached for everyone (ISR)
-  must not render anything from the session on the server: render account UI client-only.
+  reading (only a suspension goes to sign-in, for its notice), and so does signing out. Pages cached for everyone (an
+  `isr`, `swr` or `cache` route rule) render signed out on the server and pick the session up in the browser
+  (`server/plugins/st8-cached-pages.ts`); render account UI in them client-only.
 - **An `auth` layout** the pages render in, the shadcn-vue base components (`~/components/ui/{alert,button,field,input}`),
   the `cn` util, the `eyebrow` / `glass` / `border-glass-border` theme utilities, and `@nuxt/icon` with the `lucide`
   set. Shapes follow the host: `--st8-auth-radius` (fields and the submit button; default 9999px, pills) and
