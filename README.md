@@ -18,7 +18,7 @@ shadcn-vue base components it imports from `~/components/ui/`, Tailwind `@source
 Install it from a tag, so the lockfile pins the commit:
 
 ```bash
-pnpm add github:hue-studios/st8-layers#v0.1.0
+pnpm add github:hue-studios/st8-layers#v0.2.1
 ```
 
 ```ts
