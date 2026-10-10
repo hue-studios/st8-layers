@@ -65,6 +65,12 @@ export default defineNuxtConfig({
          * the host's onboarding page. It gets `?redirect=<where they were going>`. Empty = straight to that redirect.
          */
         postJoinPath: '',
+        /**
+         * Where a member's photo is shown from: `:id` (the file) and `:px` (about how big). The default is the layer's
+         * own GET /api/avatars/:id (signed-in visitors; the Member avatars folder isn't public). Empty = straight from
+         * Directus /assets, which only works while that folder is public.
+         */
+        avatarUrl: '/api/avatars/:id?size=:px',
       },
     },
   },

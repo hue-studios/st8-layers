@@ -40,7 +40,7 @@ async function createEdge(requester: string, addressee: string, status: Edge['st
 
 async function readCooldown(me: string, other: string): Promise<number | null> {
   try {
-    const until = await useStorage<number>('st8-social-rate-limit').getItem(cooldownKey(me, other))
+    const until = await useStorage<number>('st8-network-cooldown').getItem(cooldownKey(me, other))
     return typeof until === 'number' && until > Date.now() ? until : null
   } catch {
     return null
@@ -50,7 +50,7 @@ async function readCooldown(me: string, other: string): Promise<number | null> {
 async function startCooldown(me: string, other: string) {
   const ms = useSt8Network().withdrawCooldownMs
   try {
-    await useStorage<number>('st8-social-rate-limit').setItem(cooldownKey(me, other), Date.now() + ms, { ttl: Math.ceil(ms / 1000) })
+    await useStorage<number>('st8-network-cooldown').setItem(cooldownKey(me, other), Date.now() + ms, { ttl: Math.ceil(ms / 1000) })
   } catch (err) {
     console.warn('[st8-network] cooldown not stored:', (err as Error)?.message ?? err)
   }
@@ -166,7 +166,7 @@ export async function setBlocked(event: H3Event, ctx: Ctx, otherInput: unknown, 
       }
     }
     throw createError({ statusCode: 409, message: 'That changed while you were blocking. Try again.' })
-  })
+  }).finally(() => st8SocialServer.forgetBlocks(ctx.me, other))
   return { user: other, state }
 }
 

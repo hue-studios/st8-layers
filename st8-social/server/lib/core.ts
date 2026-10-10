@@ -96,7 +96,6 @@ export function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 // ── Rate limits ────────────────────────────────────────────────────────────────────────────────────────────────
 
-interface RateWindow { count: number, reset: number }
 
 /**
  * Fixed-window limit per member, in the 'st8-social-rate-limit' storage mount (memory per instance unless the host
@@ -108,20 +107,14 @@ export async function socialRateLimit(event: SocialEvent, userId: string, bucket
 
 /**
  * The fixed window behind socialRateLimit, for any key and limit ([max, seconds]); other ST8 layers (st8-network) count
- * in the same mount through it. Serialised per key in this instance, so parallel requests can't both read the same
- * count.
+ * in the same mount through it. st8-auth's countHit does the counting: one atomic increment on the shared store, one
+ * hit at a time per key in memory, so parallel requests can never both read the same count.
  */
 export async function limitRate(event: SocialEvent, key: string, [max, windowSec]: readonly [number, number], message: string) {
-  const storage = useStorage<RateWindow>('st8-social-rate-limit')
   const now = Date.now()
-  let current: RateWindow
+  let current: { count: number, reset: number }
   try {
-    current = await withLock(`rate:${key}`, async () => {
-      const stored = await storage.getItem(key)
-      const next = stored && stored.reset > now ? { count: stored.count + 1, reset: stored.reset } : { count: 1, reset: now + windowSec * 1000 }
-      await storage.setItem(key, next, { ttl: windowSec })
-      return next
-    })
+    current = await countHit('st8-social-rate-limit', key, windowSec)
   } catch (err) {
     console.warn('[st8-social] rate-limit storage failed; not counting:', (err as Error)?.message ?? err)
     return
@@ -177,8 +170,35 @@ export async function requireModerator(ctx: SocialContext) {
   if (!(await ctx.isModerator())) throw createError({ statusCode: 403, message: 'Only moderators can do that.' })
 }
 
-/** Ids of everyone with a `blocked` connection to `userId`, in either direction. */
-export async function blockedWith(userId: string): Promise<string[]> {
+// blockedWith is read on nearly every social request (a page view made ~20 identical `connections` reads), so each
+// member's answer is kept for a few seconds per instance (st8Social.blockMemoSeconds). A block or unblock made through
+// this instance clears both people at once (forgetBlocks); one made on another instance shows here within the memo.
+const blockMemo = new Map<string, { at: number, ids: Promise<string[]> }>()
+
+/** Ids of everyone with a `blocked` connection to `userId`, in either direction (memoised for a few seconds). */
+export function blockedWith(userId: string): Promise<string[]> {
+  const now = Date.now()
+  const ttl = (useSt8Social().blockMemoSeconds ?? 5) * 1000
+  const hit = blockMemo.get(userId)
+  if (hit && now - hit.at < ttl) return hit.ids
+  const ids = readBlocked(userId)
+  blockMemo.set(userId, { at: now, ids })
+  ids.catch(() => blockMemo.get(userId)?.ids === ids && blockMemo.delete(userId))
+  if (blockMemo.size > 5000) for (const [key, value] of blockMemo) if (now - value.at >= ttl) blockMemo.delete(key)
+  return ids
+}
+
+/** Drop the memoised blocks of these members (after a block or unblock between them). */
+export function forgetBlocks(...userIds: string[]) {
+  for (const id of userIds) blockMemo.delete(id)
+}
+
+/** Drop every memoised block on this instance (the dev reset route). */
+export function forgetAllBlocks() {
+  blockMemo.clear()
+}
+
+async function readBlocked(userId: string): Promise<string[]> {
   const edges = await rows<{ requester: string | null, addressee: string | null }>(sys(), 'connections', {
     fields: ['requester', 'addressee'],
     filter: { status: { _eq: 'blocked' }, _or: [{ requester: { _eq: userId } }, { addressee: { _eq: userId } }] },

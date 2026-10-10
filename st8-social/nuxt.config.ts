@@ -15,6 +15,8 @@ export default defineNuxtConfig({
       autoHideReports: 3,
       /** Cross-app teasers: an app's activity on a target shows only from this many people (after blocks). */
       teaserThreshold: 3,
+      /** How long a member's blocks are memoised per instance (a block made here clears them at once). 0 = always read. */
+      blockMemoSeconds: 5,
       /**
        * Which pending reports count toward autoHideReports (every report still reaches the queue): reporters who joined
        * at least memberHours ago, and whose last historyDays aren't mostly dismissed reports (unreliableDismissed or

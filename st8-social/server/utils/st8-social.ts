@@ -10,6 +10,7 @@ export function useSt8Social() {
     editWindowMinutes: number
     autoHideReports: number
     teaserThreshold: number
+    blockMemoSeconds: number
     autoHide: Partial<{ memberHours: number, historyDays: number, unreliableDismissed: number, unreliableActionedRatio: number }>
     limits: Record<string, number[]>
   }>
@@ -21,6 +22,7 @@ export function useSt8Social() {
     editWindowMs: (social.editWindowMinutes ?? 15) * 60_000,
     autoHideReports: social.autoHideReports ?? 3,
     teaserThreshold: Math.max(social.teaserThreshold ?? 3, 1),
+    blockMemoSeconds: Math.max(Number(social.blockMemoSeconds ?? 5), 0),
     /**
      * Which pending reports count toward the auto-hide (they all reach the queue): from members who joined this app at
      * least `memberHours` ago and whose record over `historyDays` isn't mostly dismissed (`unreliableDismissed` or more

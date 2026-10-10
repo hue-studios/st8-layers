@@ -1,5 +1,5 @@
 import { activeMembers, mentionable, resolvePeople } from '../lib/people'
-import { blockedWith, isUniqueViolation, limitRate, socialContext, withLock } from '../lib/core'
+import { blockedWith, forgetBlocks, isUniqueViolation, limitRate, socialContext, withLock } from '../lib/core'
 import { markNotificationsRead, notify, snippetOf, withdrawNotifications } from '../lib/notifications'
 import { signalTarget } from '../lib/moderation'
 import { deleteTargetSocial } from '../lib/targets'
@@ -11,8 +11,10 @@ import { deleteTargetSocial } from '../lib/targets'
 export const st8SocialServer = {
   /** The signed-in member with an active membership in this app (403 otherwise): `me`, their client, blocks. */
   socialContext,
-  /** Everyone on the other side of a block with this member, either direction. */
+  /** Everyone on the other side of a block with this member, either direction (memoised a few seconds per instance). */
   blockedWith,
+  /** After a block or unblock between them: drop these members' memoised blocks on this instance. */
+  forgetBlocks,
   /** People by id (name, avatar, title, accent colour), never an email. */
   resolvePeople,
   /** The ids that are active accounts with an active membership in this app. */

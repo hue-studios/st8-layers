@@ -5,13 +5,10 @@ import { Avatar, AvatarFallback, AvatarImage } from '~/components/ui/avatar'
 
 const props = withDefaults(defineProps<{ person: Pick<SocialPerson, 'name' | 'avatar' | 'color'> | null, size?: 'xs' | 'sm' | 'md' }>(), { size: 'sm' })
 const PX = { xs: 20, sm: 32, md: 40 } as const
-const base = String(useRuntimeConfig().public.directusUrl).replace(/\/$/, '')
-const src = computed(() => {
-  const avatar = props.person?.avatar
-  if (!avatar) return undefined
-  const px = PX[props.size] * 2
-  return /^https?:\/\//.test(avatar) ? avatar : `${base}/assets/${avatar}?width=${px}&height=${px}&fit=cover&format=webp`
-})
+// The photo comes from wherever the host serves avatars (st8-auth's public.st8Auth.avatarUrl; the Member avatars folder
+// isn't public).
+const avatarUrl = useAvatarUrl()
+const src = computed(() => (props.person?.avatar ? avatarUrl(props.person.avatar, PX[props.size] * 2) : undefined))
 </script>
 
 <template>

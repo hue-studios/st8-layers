@@ -111,6 +111,7 @@ The layer expects the host to provide:
       autoHideReports: 3,                     // counting pending reports that hide a comment (or moderate-able item)
       autoHide: { memberHours: 24, historyDays: 90, unreliableDismissed: 5, unreliableActionedRatio: 0.2 }, // which count
       teaserThreshold: 3,                     // another app's activity shows only from this many people (after blocks)
+      blockMemoSeconds: 5,                    // a member's blocks are memoised this long per instance (0 = always read)
       limits: { comments: [10, 60], reactions: [60, 60], reports: [20, 3600], reportsDaily: [50, 86400],
                 moderation: [120, 3600], suspensions: [20, 86400], teasers: [60, 60] }, // [max, seconds] per member
     },
@@ -129,8 +130,10 @@ The layer expects the host to provide:
   util, the `eyebrow` / `border-glass-border` / `text-brand` theme utilities, `@nuxt/icon` with the `lucide` and
   `fluent-emoji-flat` sets, `@vueuse/core`, a `<Toaster />` (from `~/components/ui/sonner`) mounted once and
   `vue-sonner/style.css` in the CSS. Tailwind must `@source` the layer directory.
-- **Shared storage (production):** mount a shared driver (Upstash, Vercel KV, Redis) on `st8-social-rate-limit` in
-  `nitro.storage`, or the limits count per serverless instance.
+- **Shared storage (production):** st8-auth's `mountSharedStore` moves `st8-social-rate-limit` onto the shared store
+  (atomic counting), or the limits count per serverless instance.
+- **Avatars:** `SocialAvatar` shows photos from st8-auth's `public.st8Auth.avatarUrl` (the Member avatars folder isn't
+  public).
 
 ## API
 
@@ -206,7 +209,8 @@ The layer expects the host to provide:
 - **`hidden_by` stays on the server**: reads with the member's token never ask for `comments.hidden_by` (whether a
   hidden comment was hidden by a person or by the threshold is looked up with the server account), so a member policy
   can leave the field out and an author never learns which moderator hid their comment.
-- **Blocks** (`connections.status = blocked`, either direction; made and undone by layers/st8-network): each side's
+- **Blocks** (`connections.status = blocked`, either direction; made and undone by layers/st8-network; `blockedWith`
+  is memoised `blockMemoSeconds` per instance and cleared at once by a block or unblock made on that instance): each side's
   comments and reactions are hidden from the other and subtracted from the counts they see; no replies, reactions,
   mentions or notifications across a block.
 - **Mentions**: a body may mention any active member of the app (the profile rule) who isn't blocked; the

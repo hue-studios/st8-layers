@@ -84,8 +84,9 @@ The layer expects the host to provide:
   `useNetworkInvite().remember(code)` before going to sign-up or sign-in with `?redirect` back to the landing; signed in,
   it redeems with `useNetworkInvite().redeem(code)` (automatically when the remembered code matches, otherwise on a
   click). A link alone must never connect a signed-in member. Insider: `app/pages/i/[code].vue`.
-- **Shared storage (production):** the counters and the withdraw cooldown live on `st8-social-rate-limit`; mount a
-  shared driver there (st8-social's README) or they count per serverless instance.
+- **Shared storage (production):** the counters live on `st8-social-rate-limit` and the withdraw cooldown on
+  `st8-network-cooldown`; st8-auth's `mountSharedStore` moves both (the cooldown under the shared `st8:<env>:` prefix,
+  since connections are global), or they count per serverless instance.
 
 ## API
 

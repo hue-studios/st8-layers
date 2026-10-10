@@ -4,6 +4,15 @@
 // realtime, rate limits). The pages that show the network (an Orbit, a list, member search) are the host's. See
 // README.md for the contract.
 export default defineNuxtConfig({
+  nitro: {
+    // The withdraw cooldown (asking the same person again too soon). Connections are global across ST8, so on the
+    // shared store it lives under the shared `st8:<env>:` prefix (st8-auth's mountSharedStore); memory per instance
+    // until then.
+    storage: {
+      'st8-network-cooldown': { driver: 'memory' },
+    },
+  },
+
   runtimeConfig: {
     st8Network: {
       /** Per member (invite previews: per IP): [max, window in seconds]. */

@@ -18,7 +18,10 @@ public site with accounts). Nothing in it is app-specific; the host names the ap
 | `server/api/{industries,counties}.get.ts` | The published industries and counties (cached): profile choices, and free for the host |
 | `server/utils/sign-in.ts` | `completeSignIn`: suspended check → `ensureAppAccess` → `ensureProfile` → session |
 | `server/utils/users.ts` | `findUserByEmail` (case-insensitive; some legacy emails are mixed-case) |
-| `server/utils/rate-limit.ts` | `enforceRateLimit` (fixed window in the `st8-auth-rate-limit` storage mount) |
+| `server/utils/rate-limit.ts` | `enforceRateLimit` (fixed window in the `st8-auth-rate-limit` storage mount, counted by `countHit`) |
+| `server/utils/shared-store.ts` | `mountSharedStore` (moves the layers' storage mounts onto the shared Upstash store, below) and `countHit` (one atomic `INCR` + expiry on Redis/Upstash; one hit at a time per key in memory) |
+| `server/utils/avatars.ts`, `server/utils/assets.ts`, `server/api/avatars/[id].get.ts` | Member photos: `GET /api/avatars/<id>?size=` (only files that are someone's avatar; signed-in visitors, plus host exceptions from `registerAvatarAccess`), `streamDirectusAsset` |
+| `app/composables/useAvatarUrl.ts`, `shared/utils/avatar-url.ts` | A photo's URL from `public.st8Auth.avatarUrl` (default the route above) |
 | `server/utils/join-via.ts` | `parseJoinVia`, `takeJoinVia`: where a new member came from (`memberships.joined_via`, below) |
 | `server/utils/email-send.ts`, `emails/` | SendGrid v3 REST sender (no SDK) and the password-reset, welcome and invite templates |
 | `server/api/auth/*` | `login`, `register`, `logout`, `refresh`, `heartbeat`, `password-request`, `password-reset`, `accept-invite`, `sync-access` |
@@ -87,8 +90,35 @@ The layer expects the host to provide:
   set. Shapes follow the host: `--st8-auth-radius` (fields and the submit button; default 9999px, pills) and
   `--st8-auth-panel-radius` (notices; default 1rem), set on `:root`. `sharp` (avatar re-encoding) is a peer dependency.
 - **Tailwind sources:** the host's CSS must `@source` the layer directory (Insider: `app/assets/css/main.css`).
-- **Shared storage (production):** mount a shared driver (Upstash, Vercel KV, Redis) on `st8-auth-rate-limit` in
-  `nitro.storage`, or the rate limits count per serverless instance.
+- **Shared storage (production):** call `mountSharedStore` from a Nitro plugin (below), or the rate limits count per
+  serverless instance.
+- **Avatars:** photos go to `st8Auth.avatarFolder` ("Member avatars"), which isn't public; show them with
+  `useAvatarUrl()` (default `/api/avatars/:id?size=:px`, served by the layer), never a Directus `/assets` URL. A host
+  that must show a photo to signed-out visitors registers the case with `registerAvatarAccess((event, id) => …)`. A
+  host route at the same path replaces the layer's.
+
+## The shared store
+
+One Upstash Redis database (`st8`, Vercel Marketplace: `KV_REST_API_URL`, `KV_REST_API_TOKEN`) for every ST8 app. Mount it
+at runtime from a Nitro plugin, so the token never reaches the build:
+
+```ts
+// server/plugins/shared-store.ts
+import upstashDriver from 'unstorage/drivers/upstash'
+export default defineNitroPlugin(() => {
+  mountSharedStore({ driver: upstashDriver, mounts: { 'insider-link-preview': 'link-preview' } }) // mounts: the host's own, optional
+})
+```
+
+- On by default on Vercel (Production and Preview), off locally; `ST8_SHARED_STORE=1` / `=0` forces it, or pass
+  `enabled`. The host installs `@upstash/redis` (the driver's client).
+- Keys: `<app>:<VERCEL_ENV|local>:<name>:…`: `auth-rate-limit`, `social-rate-limit` (when st8-social is there) and the
+  host's `mounts`; the network's withdraw cooldown is global across ST8 (connections are), so it goes under
+  `st8:<env>:network-cooldown`.
+- Counting is atomic there (`countHit`: one Lua call, `INCR` then `PEXPIRE` on the first hit), so parallel requests on
+  different instances can't both pass a limit.
+- Leave Nitro's `cache` mount in memory: cached functions read their storage on every call and swr entries are written
+  without a TTL.
 
 ## Hooks for the host
 

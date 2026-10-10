@@ -1,22 +1,14 @@
-interface RateWindow {
-  count: number
-  /** Epoch ms when the window resets. */
-  reset: number
-}
-
 /**
  * Fixed-window rate limit. Counts live in the 'st8-auth-rate-limit' storage mount: memory (per instance) unless the
- * host mounts a shared driver, see nuxt.config.ts. Throws 429 with Retry-After once `key` passes `max` hits in
- * `windowSec`. A storage failure never blocks sign-in; it only skips the count.
+ * host moves it to the shared store (mountSharedStore), where each hit is one atomic increment. Throws 429 with
+ * Retry-After once `key` passes `max` hits in `windowSec`. A storage failure never blocks sign-in; it only skips the
+ * count.
  */
 export async function enforceRateLimit(event: AuthEvent, key: string, max: number, windowSec: number) {
-  const storage = useStorage<RateWindow>('st8-auth-rate-limit')
   const now = Date.now()
-  let current: RateWindow
+  let current: { count: number, reset: number }
   try {
-    const stored = await storage.getItem(key)
-    current = stored && stored.reset > now ? { count: stored.count + 1, reset: stored.reset } : { count: 1, reset: now + windowSec * 1000 }
-    await storage.setItem(key, current, { ttl: windowSec })
+    current = await countHit('st8-auth-rate-limit', key, windowSec)
   } catch (err) {
     console.warn('[st8-auth] rate-limit storage failed; not counting:', (err as Error)?.message ?? err)
     return
