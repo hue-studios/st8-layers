@@ -24,6 +24,7 @@ member's own token. Realtime is a change signal (`threads.version`), never a raw
 | `server/lib/reactions.ts` | Set, switch or clear one reaction per member per target; reactors list |
 | `server/lib/moderation.ts` | Reports (snapshot, one per member per target), auto-hide (comments, and targets with a `moderate` hook), moderating a host's target, `signalTarget`, `moderation_log` |
 | `server/lib/targets.ts` | `deleteTargetSocial`: a target is gone for good; its conversation here goes with it |
+| `server/lib/teasers.ts` | Cross-app teasers: other apps' totals on a target (counts and reaction keys only), threshold and blocks applied |
 | `server/lib/notifications.ts` | Create (never to yourself, never across a block), reaction de-duplication, list, mark read |
 | `server/lib/people.ts` | Names, avatars and accent colours by id (never emails); mentionable checks; mention autocomplete |
 | `server/api/social/*` | The routes (below) |
@@ -34,7 +35,7 @@ member's own token. Realtime is a change signal (`threads.version`), never a raw
 | `app/composables/useSocialThread.ts` | `createThread`: the state behind `SocialThread` (tree, delta merge, optimistic writes with rollback) |
 | `app/composables/useSocialNotifications.ts` | Unread count and list, live over realtime |
 | `app/components/ResponsiveDialog.vue` | Dialog on desktop, bottom drawer on phones. Free for the host to reuse. |
-| `app/components/social/*` | `SocialReactionBar` (variants `bar`, `compact`, `text`, `action`), `SocialReactionSummary`, `SocialReactionPicker`, `SocialReactionGlyphs`, `SocialReactorsDialog`, `SocialThread`, `SocialComment`, `SocialCommentBody`, `SocialComposer`, `SocialMentionTextarea` (the `@` autocomplete, free for host composers), `SocialReportDialog`, `SocialNotificationBell`, `SocialNotificationList`, `SocialAvatar` |
+| `app/components/social/*` | `SocialReactionBar` (variants `bar`, `compact`, `text`, `action`), `SocialReactionSummary`, `SocialReactionPicker`, `SocialReactionGlyphs`, `SocialReactorsDialog`, `SocialThread`, `SocialComment`, `SocialCommentBody`, `SocialComposer`, `SocialMentionTextarea` (the `@` autocomplete, free for host composers), `SocialReportDialog`, `SocialNotificationBell`, `SocialNotificationList`, `SocialAvatar`, `SocialTeaser` (another app's activity on the same row, with its join link) |
 
 ## Contract with the host app
 
@@ -71,7 +72,7 @@ The layer expects the host to provide:
       visible: async (items, { event, viewer }) => new Set(/* the ids this viewer may see, one query */),
       owners: async (items) => new Map(),    // optional: item → owning user (notified; can't report their own)
       snapshot: async (item) => ({}),        // optional: kept on reports
-      link: (item, { comment }) => `/events?event=${item}${comment ? `&comment=${comment}` : ''}`, // optional
+      link: (item, { comment }) => `/events/${item}${comment ? `?comment=${comment}` : ''}`, // optional
       moderate: { state, apply },            // optional: moderation of the item itself (below)
     })
   })
@@ -101,12 +102,14 @@ The layer expects the host to provide:
       moderatorRoles: ['moderator', 'admin'], // memberships.role values that may hide, remove, lock
       editWindowMinutes: 15,                  // or any time before the first reply
       autoHideReports: 3,                     // distinct pending reports that hide a comment
-      limits: { comments: [10, 60], reactions: [60, 60], reports: [20, 3600] }, // [max, seconds] per member
+      teaserThreshold: 3,                     // another app's activity shows only from this many people (after blocks)
+      limits: { comments: [10, 60], reactions: [60, 60], reports: [20, 3600], teasers: [60, 60] }, // [max, seconds] per member
     },
     public: {
       st8Social: {
         websocketUrl: '',                     // wss://…/websocket; empty = derived from public.directusUrl
         profilePath: '',                      // e.g. '/members/:id'; empty = names don't link
+        teasers: [],                          // other apps whose activity shows as a teaser (below); empty = none
       },
     },
   }
@@ -139,6 +142,7 @@ The layer expects the host to provide:
 | `POST /api/social/targets/moderate` | Moderators: `{ collection, item, action: hide \| unhide \| remove, reason? }` on a target with a `moderate` hook |
 | `GET /api/social/notifications`, `POST /api/social/notifications/read` | The bell: list (this app's), unread count, mark read (`ids` or `all`) |
 | `GET /api/social/mentions?q&collection&item` | Autocomplete (see below) |
+| `GET /api/social/teasers?t=events:12&t=…` | Cross-app teasers for up to 30 targets: `{ app, teasers: { 'events:12': [{ app, people, comments, reactions, member }] } }` (below) |
 
 ## Behaviour notes
 
@@ -175,3 +179,14 @@ The layer expects the host to provide:
   member) is resolved for them.
 - **Realtime**: the components subscribe to `threads` (`id`, `version`, target) for what's on screen and to the
   member's own `notifications`. A bump refetches the summary, or the open thread's delta.
+- **Cross-app teasers**: threads are per app, so another app's conversation on the same row is a reason to join it.
+  `public.st8Social.teasers` lists the apps whose activity this app shows (`{ app, label, joinUrl, openUrl? }`; in the
+  URLs `{via}` becomes `<this app>:<collection>:<item>`, `{collection}` and `{item}` the target). `GET
+  /api/social/teasers` reads those apps' threads with the server account (members' tokens can't, by design) and returns
+  counts and reaction keys only: distinct people (published comments and reactions), comments, the top three reaction
+  keys, and whether the viewer is a member there. Never names, ids or text, never this app's own totals. People blocked
+  with the viewer (either way) are left out, then an app below `teaserThreshold` people is left out entirely, so a
+  count on a quiet row can't point at a person. Targets the viewer can't see (`visible()`) get nothing. The raw totals
+  are cached two minutes per app and target. `SocialTeaser` shows them with a join link (or `openUrl` for members
+  there); the join link's `via` is recorded on the new membership by layers/st8-auth (`joined_via`). Each app chooses
+  whose totals it shows; the other app's side needs nothing but its threads.

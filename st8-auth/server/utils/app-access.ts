@@ -103,9 +103,10 @@ export async function syncAccess(userId: string): Promise<{ added: string[], rem
 /**
  * Make the user a member of `app` (open signup) and grant that app's policies, additively. Creates an active `member`
  * membership if there is none; an existing row is left as it is, so a suspended membership stays suspended (callers
- * check status before calling). Then reconciles policies with syncAccess. Never writes the user's role.
+ * check status before calling). Then reconciles policies with syncAccess. Never writes the user's role. `via` (a checked
+ * join source, server/utils/join-via.ts) is recorded only on a membership created here.
  */
-export async function ensureAppAccess(userId: string, app: St8App): Promise<{ membership: SessionMembership, joined: boolean }> {
+export async function ensureAppAccess(userId: string, app: St8App, opts: { via?: string | null } = {}): Promise<{ membership: SessionMembership, joined: boolean }> {
   let membership = await readMembership(userId, app)
   let joined = false
 
@@ -125,6 +126,8 @@ export async function ensureAppAccess(userId: string, app: St8App): Promise<{ me
           role: 'member',
           status: 'active',
           joined_at: new Date().toISOString(),
+          // Where they joined from (another app's teaser), written once, here. parseJoinVia has checked it.
+          ...(opts.via ? { joined_via: opts.via } : {}),
         }),
       )
       joined = true

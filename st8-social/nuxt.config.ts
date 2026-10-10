@@ -13,11 +13,14 @@ export default defineNuxtConfig({
       editWindowMinutes: 15,
       /** Distinct pending reports that hide a comment until a moderator reviews it. */
       autoHideReports: 3,
+      /** Cross-app teasers: an app's activity on a target shows only from this many people (after blocks). */
+      teaserThreshold: 3,
       /** Per member: [max, window in seconds]. */
       limits: {
         comments: [10, 60],
         reactions: [60, 60],
         reports: [20, 3600],
+        teasers: [60, 60],
       },
     },
     public: {
@@ -29,6 +32,11 @@ export default defineNuxtConfig({
         websocketUrl: '',
         /** Where a member's name links to; `:id` is their user id. Empty = names don't link. */
         profilePath: '',
+        /**
+         * Cross-app teasers: the other apps whose activity on a shared row this app shows (SocialTeaserApp: app, label,
+         * joinUrl, openUrl?). Empty = none.
+         */
+        teasers: [] as { app: string, label: string, joinUrl: string, openUrl?: string }[],
       },
     },
   },

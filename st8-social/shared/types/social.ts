@@ -142,3 +142,30 @@ export interface ReactionResult {
 export type ReportReason = 'spam' | 'harassment' | 'hate' | 'inappropriate' | 'misinformation' | 'off_topic' | 'other'
 
 export type ModerationAction = 'hide' | 'unhide' | 'remove'
+
+/**
+ * An app whose activity this app shows as a cross-app teaser (`public.st8Social.teasers`). In `joinUrl` and `openUrl`,
+ * `{via}` becomes `<this app>:<collection>:<item>` (the join flow records it on the new membership as `joined_via`),
+ * `{collection}` and `{item}` the target.
+ */
+export interface SocialTeaserApp {
+  app: string
+  /** "the Summit app" */
+  label: string
+  /** Where someone without a membership there joins, e.g. `https://…/auth/register?via={via}`. */
+  joinUrl: string
+  /** Where a member there opens the same target; omitted = no link for members. */
+  openUrl?: string
+}
+
+/** GET /api/social/teasers: another app's activity on a target. Counts and reaction keys only; never names or text. */
+export interface SocialTeaser {
+  app: string
+  /** Distinct people commenting or reacting there (people blocked with the viewer left out). At least the threshold. */
+  people: number
+  comments: number
+  /** The top reaction keys, most used first. */
+  reactions: ReactionKey[]
+  /** The viewer is an active member of that app. */
+  member: boolean
+}

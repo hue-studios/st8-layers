@@ -14,6 +14,7 @@ names the app in runtime config.
 | `server/utils/sign-in.ts` | `completeSignIn`: suspended check → `ensureAppAccess` → `ensureProfile` → session |
 | `server/utils/users.ts` | `findUserByEmail` (case-insensitive; some legacy emails are mixed-case) |
 | `server/utils/rate-limit.ts` | `enforceRateLimit` (fixed window in the `st8-auth-rate-limit` storage mount) |
+| `server/utils/join-via.ts` | `parseJoinVia`, `takeJoinVia`: where a new member came from (`memberships.joined_via`, below) |
 | `server/utils/email-send.ts`, `emails/` | SendGrid v3 REST sender (no SDK) and the password-reset, welcome and invite templates |
 | `server/api/auth/*` | `login`, `register`, `logout`, `refresh`, `heartbeat`, `password-request`, `password-reset`, `accept-invite`, `sync-access` |
 | `server/api/websocket/token.get.ts` | The access token for the realtime handshake (see "Tokens" below) |
@@ -21,6 +22,7 @@ names the app in runtime config.
 | `app/middleware/auth.global.ts` | Every route needs a session except `publicRoutes` and pages with `definePageMeta({ auth: false })` |
 | `app/composables/useAuth.ts` | `login`, `register`, `requestPasswordReset`, `resetPassword`, `acceptInvite`, `logout`, plus `authError()` |
 | `app/plugins/session-resume.client.ts` | Pings the heartbeat when the app returns to the foreground |
+| `app/plugins/st8-join-via.client.ts` | Keeps another app's `?via=` for a day (cookie `st8_via`) so sign-up or sign-in can record it |
 | `app/pages/` | `/login`, `/auth/register`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/accept-invite` |
 | `app/components/auth/` | The forms (`AuthLoginForm`, `AuthRegisterForm`, `AuthForgotPasswordForm`, `AuthNewPasswordForm`) and their pieces |
 | `shared/types/auth.d.ts` | The typed session (`#auth-utils` augmentation) |
@@ -44,6 +46,7 @@ The layer expects the host to provide:
     st8Auth: {
       app: 'insider',            // required: insider | summit | portal
       apps: { insider: '' },     // apps a reset link may open (app → origin; '' = this app's APP_URL)
+      joinViaCollections: ['events'], // collections another app's join link may name in ?via= (the default)
     },
     public: {
       appUrl: '…',               // this app's public origin
@@ -101,3 +104,15 @@ at their next token refresh, and (through the Flow) removes only that app's poli
 
 Directus resolves policies on each request, so new policies apply to a token that already exists: sign-in doesn't
 log in twice the way CardDesk did.
+
+## Where members join from (`memberships.joined_via`)
+
+Another ST8 app's cross-app teaser (layers/st8-social's `SocialTeaser`) links here with
+`?via=<app>:<collection>:<item>`, e.g. `/auth/register?via=summit:events:12`. On any page a signed-out visitor lands
+on, `app/plugins/st8-join-via.client.ts` keeps it for a day in the `st8_via` cookie, so it survives the trip through
+sign-up, sign-in or an invite. `completeSignIn` reads and clears the cookie (`takeJoinVia`); `parseJoinVia` accepts only
+a known app other than this one, a collection in `st8Auth.joinViaCollections` and a short safe item; and
+`ensureAppAccess(userId, app, { via })` writes it only on a membership it creates. An existing membership is never
+changed, and members can't write memberships at all (their policy reads `id, app, role, status, joined_at` of their
+own). It's attribution, not a permission: someone could hand-craft their own `?via=`, which only miscounts. Schema:
+`memberships.joined_via` (string ≤120, read-only in the Studio), written by the server account.

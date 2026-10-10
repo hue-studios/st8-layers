@@ -18,6 +18,8 @@ export function useSt8Auth() {
     app,
     appUrl,
     appName: config.public.st8Auth.appName || 'Southern Tier 8',
+    /** Collections another app's join link may name in `via` (memberships.joined_via). */
+    joinViaCollections: ((config.st8Auth.joinViaCollections ?? []) as string[]).filter((c) => /^[a-z_]{1,40}$/.test(c)),
     directusUrl: String(config.public.directusUrl).replace(/\/$/, ''),
     /** Origin a reset link for `target` should use, or null if `target` isn't whitelisted. */
     appOrigin(target: string): string | null {

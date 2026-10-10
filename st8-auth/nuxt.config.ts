@@ -21,6 +21,11 @@ export default defineNuxtConfig({
        * public.appUrl. Only apps listed here are accepted by POST /api/auth/password-request.
        */
       apps: {} as Record<string, string>,
+      /**
+       * Collections another ST8 app's join link may name in `?via=<app>:<collection>:<item>` (its cross-app teasers);
+       * recorded on the new membership as `joined_via`. Empty = `via` is ignored.
+       */
+      joinViaCollections: ['events'] as string[],
       /** Shared secret for POST /api/auth/sync-access (the Directus memberships Flow). Unset = endpoint disabled. */
       syncSecret: '',
       /** Transactional email. Unset key = sending is a logged no-op. SENDGRID_* env vars also work. */

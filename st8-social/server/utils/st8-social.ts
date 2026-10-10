@@ -9,6 +9,7 @@ export function useSt8Social() {
     moderatorRoles: string[]
     editWindowMinutes: number
     autoHideReports: number
+    teaserThreshold: number
     limits: Record<string, number[]>
   }>
   return {
@@ -17,12 +18,14 @@ export function useSt8Social() {
     moderatorRoles: social.moderatorRoles?.length ? social.moderatorRoles : ['moderator', 'admin'],
     editWindowMs: (social.editWindowMinutes ?? 15) * 60_000,
     autoHideReports: social.autoHideReports ?? 3,
+    teaserThreshold: Math.max(social.teaserThreshold ?? 3, 1),
     limits: {
       comments: [10, 60],
       reactions: [60, 60],
       reports: [20, 3600],
+      teasers: [60, 60],
       ...social.limits,
-    } as Record<'comments' | 'reactions' | 'reports', [number, number]>,
+    } as Record<'comments' | 'reactions' | 'reports' | 'teasers', [number, number]>,
   }
 }
 
