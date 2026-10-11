@@ -65,10 +65,13 @@ export function directusError(err: unknown): { status: number | undefined, code:
   }
 }
 
-/** POST to Directus's own /auth or /users endpoints with no token (login, refresh, logout, invite accept). */
+/**
+ * POST to Directus's own /auth or /users endpoints with no token (login, refresh, logout, invite accept). Retried while
+ * Directus is busy, then a 503 (retryDirectusBusy).
+ */
 export function directusAuthPost<T>(path: string, body: Record<string, unknown>) {
   const { directusUrl } = useSt8Auth()
-  return $fetch<T>(directusUrl + path, { method: 'POST', body, retry: 0, timeout: 15_000 })
+  return retryDirectusBusy(() => $fetch<T>(directusUrl + path, { method: 'POST', body, retry: 0, timeout: 15_000 }))
 }
 
 /** Sign in with email + password. Returns null on bad credentials; throws on anything else. */

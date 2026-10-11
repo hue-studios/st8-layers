@@ -9,8 +9,20 @@ export async function streamDirectusAsset(event: H3Event, id: string, { transfor
   const config = useRuntimeConfig()
   const token = (config as { directusServerToken?: string }).directusServerToken || process.env.DIRECTUS_SERVER_TOKEN
   const query = transform ? `?${new URLSearchParams(Object.entries(transform).map(([k, v]) => [k, String(v)]))}` : ''
-  const res = await fetch(`${String(config.public.directusUrl).replace(/\/$/, '')}/assets/${id}${query}`, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok || !res.body) throw createError({ statusCode: 404, message: 'Not found' })
+  const url = `${String(config.public.directusUrl).replace(/\/$/, '')}/assets/${id}${query}`
+  // A busy Directus (429, 503) is retried like an SDK error and still busy answers 503; any other failure is a 404.
+  const res = await retryDirectusBusy(async () => {
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    if (r.status === 429 || r.status === 503) {
+      const body = await r.json().catch(() => null) as { errors?: unknown[] } | null
+      throw Object.assign(new Error(`Directus ${r.status}`), { status: r.status, errors: body?.errors, response: r })
+    }
+    return r
+  }).catch((err) => {
+    if ((err as { statusCode?: number }).statusCode === 503) throw err
+    return null
+  })
+  if (!res?.ok || !res.body) throw createError({ statusCode: 404, message: 'Not found' })
   setResponseHeaders(event, {
     'Content-Type': res.headers.get('content-type') ?? 'image/webp',
     'Cache-Control': cache,

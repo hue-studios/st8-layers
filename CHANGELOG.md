@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.4.0
+
+What Insider's launch follow-ups asked for (`insider/docs/st8-layers-requests.md` §6, §7).
+
+### A busy Directus answers 503, not 500 (st8-auth)
+
+Directus's pressure limiter (on by default, `PRESSURE_LIMITER_*`) refuses every request with 503 `SERVICE_UNAVAILABLE`
+"Under pressure" while its own event loop is overloaded, whoever caused the load; seen from Insider's probes at 15–30
+requests a second. The SDK throws a plain object, so routes answered 500.
+
+- **`withDirectusRetry(client)`** (server util): every request on the client goes through **`retryDirectusBusy(run)`**,
+  which retries a pressure-limiter 503 (only that 503: `extensions.reason: 'Under pressure'`), a 429
+  `REQUESTS_EXCEEDED` or a connect-phase network error (`ECONNREFUSED`, `UND_ERR_CONNECT_TIMEOUT`, DNS) after 250 ms and
+  750 ms, or Directus's `Retry-After` up to 2 s. Directus never ran those requests, so writes are retried too. Still
+  busy: `createError({ statusCode: 503, data: { retryAfter: 2 } })`. Any other error is thrown as it came.
+- **`st8-directus-busy` plugin**: a Nitro `error` hook that adds `Retry-After` to that 503.
+- **The layer's own calls** use it: `directusAuthPost` (sign-in, refresh, logout, invite accept) and
+  `streamDirectusAsset` (`/api/avatars`). A busy Directus at sign-in is now a 503, not a 500; refresh already answered 503
+  for transient failures and now retries first.
+
+### `syncAccess`: one row per policy when two syncs race (st8-auth)
+
+On a first sign-in the app's `syncAccess` and the memberships Flow's can run at the same instant and both add the same
+policy. After adding, `syncAccess` re-reads each added policy's rows and keeps the lowest `id`, deleting the rest
+(counted in `removed`); overlapping syncs converge on the same row without a lock or a store. A delete that loses the
+race (Directus answers 403 for a row that's already gone) is skipped quietly instead of being logged and counted in
+`failed`. `removed` counts the deletes a sync sent, so racing syncs may each count the same duplicate. Checked from
+Insider: the test partner's two Insider rows taken away, four syncs at once, six rounds: one row per policy every time.
+
+### Upgrading
+
+1. Bump the ref: `"@hue-studios/st8-layers": "github:hue-studios/st8-layers#v0.4.0"`, `pnpm install`.
+2. Wrap the host's clients: `getDirectus()` and `getUserDirectus(token)` return
+   `withDirectusRetry(createDirectus(url).with(staticToken(token)).with(rest()))` (auto-imported from the layer). Wrap
+   any other SDK client the host makes for its own routes too (Summit: `useDirectus()`, the site-content client).
+   Insider: drop its own copy (`server/utils/directus.ts`'s `withBusyRetry`, `server/plugins/directus-busy.ts`); the
+   names would clash.
+3. Nothing else: no runtime config, no Directus change.
+
 ## v0.3.0
 
 What Insider's Phase 9 asked for (shared store, avatars, fewer Directus round trips).

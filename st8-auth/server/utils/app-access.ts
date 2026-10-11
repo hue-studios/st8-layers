@@ -174,6 +174,19 @@ export async function syncAccess(userId: string): Promise<{ added: string[], rem
     }
   }
 
+  // Two syncs can run at once (the app's on sign-in and the memberships Flow's, fired by the same new membership). A row
+  // the other one deleted first answers 403 (Directus's answer for a missing row): that's done, not a failure.
+  const rowGone = async (id: string) => !(await directus.request(accessEndpoint({ filter: { id: { _eq: id } }, fields: ['id'], limit: 1 })).catch(() => [{}])).length
+  const remove = async (row: AccessRow) => {
+    try {
+      await directus.request(customEndpoint({ path: `/access/${row.id}`, method: 'DELETE' }))
+      return true
+    } catch (err) {
+      if (await rowGone(row.id)) return false
+      return attempt('remove', row.policy, () => Promise.reject(err))
+    }
+  }
+
   const seen = new Set<string>()
   for (const row of rows) {
     if (!managed.has(row.policy)) continue // not ours: leave it alone
@@ -181,14 +194,21 @@ export async function syncAccess(userId: string): Promise<{ added: string[], rem
       seen.add(row.policy)
       continue
     }
-    const ok = await attempt('remove', row.policy, () => directus.request(customEndpoint({ path: `/access/${row.id}`, method: 'DELETE' })))
-    if (ok) removed.push(row.policy)
+    if (await remove(row)) removed.push(row.policy)
   }
   for (const policy of wanted) {
     if (seen.has(policy) || !managed.has(policy)) continue // another app's policy: its server grants it
     const body = JSON.stringify({ user: userId, policy })
     const ok = await attempt('add', policy, () => directus.request(customEndpoint({ path: '/access', method: 'POST', body })))
     if (ok) added.push(policy)
+  }
+  // Both syncs may have added the same policy. Re-read each added one and keep the row with the lowest id: whichever
+  // sync re-reads second sees both rows and keeps the same one the other would, so overlapping syncs converge on one.
+  for (const policy of added) {
+    const mine = await directus.request(accessEndpoint({ filter: { user: { _eq: userId }, policy: { _eq: policy } }, fields: ['id', 'user', 'policy'], limit: -1 }))
+      .catch(() => [] as AccessRow[])
+    const extra = [...mine].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(1)
+    for (const row of extra) if (await remove(row)) removed.push(row.policy)
   }
 
   if (added.length || removed.length) console.info(`[st8-auth] syncAccess ${userId}: +${added.length} −${removed.length}`)

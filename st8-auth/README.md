@@ -18,6 +18,7 @@ public site with accounts). Nothing in it is app-specific; the host names the ap
 | `server/api/{industries,counties}.get.ts` | The published industries and counties (cached): profile choices, and free for the host |
 | `server/utils/sign-in.ts` | `completeSignIn`: suspended check → `ensureAppAccess` → `ensureProfile` → session |
 | `server/utils/users.ts` | `findUserByEmail` (case-insensitive; some legacy emails are mixed-case) |
+| `server/utils/directus-busy.ts`, `server/plugins/st8-directus-busy.ts` | A busy Directus: `withDirectusRetry(client)` (the host wraps its two clients), `retryDirectusBusy(run)`, `DIRECTUS_BUSY_RETRY_AFTER`; the plugin adds `Retry-After` to the 503 |
 | `server/utils/rate-limit.ts` | `enforceRateLimit` (fixed window in the `st8-auth-rate-limit` storage mount, counted by `countHit`) |
 | `server/utils/shared-store.ts` | `mountSharedStore` (moves the layers' storage mounts onto the shared Upstash store, below) and `countHit` (one atomic `INCR` + expiry on Redis/Upstash; one hit at a time per key in memory) |
 | `server/utils/avatars.ts`, `server/utils/assets.ts`, `server/api/avatars/[id].get.ts` | Member photos: `GET /api/avatars/<id>?size=` (only files that are someone's avatar; signed-in visitors, plus host exceptions from `registerAvatarAccess`), `streamDirectusAsset` |
@@ -54,6 +55,12 @@ The layer expects the host to provide:
   `counties`; read `directus_access`, and create/delete user-level rows for **this app's** mapped policies only; create
   and read `directus_files` and delete replaced avatars in the avatar folder. References: Insider's `Insider Server`
   (insider `scripts/directus/access.mjs`) and Summit's `Summit Server` (summit-v2 `scripts/directus-st8-access.mjs`).
+- **Both clients wrapped in `withDirectusRetry(...)`** (since v0.4.0): `return withDirectusRetry(createDirectus(url)
+  .with(staticToken(token)).with(rest()))`. A request Directus refused without running it (its pressure limiter's 503
+  "Under pressure", a 429 `REQUESTS_EXCEEDED`, a connection that never opened) is retried after 250 ms and 750 ms (or
+  its `Retry-After`, up to 2 s), writes too; still busy, the route answers 503 with `Retry-After: 2` (the layer's
+  `st8-directus-busy` plugin adds the header) instead of a 500. Other errors pass through. The layer's own calls to
+  Directus (sign-in, refresh, invite accept, `streamDirectusAsset`) do the same through `retryDirectusBusy(run)`.
 - **Runtime config:**
 
   ```ts
