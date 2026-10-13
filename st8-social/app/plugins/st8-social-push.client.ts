@@ -1,0 +1,35 @@
+// Push in the page (README, "Push"): the device's state for the switch, a tapped notification opened in this window,
+// and the device forgotten at sign-out (useSocialNotifications keeps the app icon's badge). Nothing runs, and no service
+// worker is registered, while push is off in this app (no VAPID public key).
+export default defineNuxtPlugin((nuxtApp) => {
+  const push = (useRuntimeConfig().public.st8Social as { push?: { vapidPublicKey?: string } } | undefined)?.push
+  if (!push?.vapidPublicKey) return
+  const { loggedIn } = useUserSession()
+  const { refresh, forgetDevice } = useSocialPush()
+
+  nuxtApp.hook('st8-auth:sign-out', forgetDevice)
+
+  // The service worker asks an open window to go to a tapped notification's page.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      const data = event.data as { type?: string, url?: unknown } | null
+      if (data?.type !== 'st8-push:open' || typeof data.url !== 'string' || !data.url.startsWith('/') || data.url.startsWith('//')) return
+      void navigateTo(data.url)
+    })
+    navigator.serviceWorker.startMessages()
+  }
+
+  // On sign-in, and when the app comes back (at most every 5 minutes): the member may have changed it on another tab,
+  // or in the browser's settings.
+  let checked = 0
+  const check = () => {
+    checked = Date.now()
+    void refresh()
+  }
+  watch(loggedIn, (ok) => {
+    if (ok) check()
+  }, { immediate: true })
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && loggedIn.value && Date.now() - checked > 300_000) check()
+  })
+})

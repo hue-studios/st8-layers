@@ -112,6 +112,10 @@ export async function startSession(event: AuthEvent, userId: string, tokens: Dir
 /** End the session and revoke its Directus refresh token. */
 export async function endSession(event: AuthEvent) {
   const session = await getUserSession(event)
+  // Listeners (st8-social: this device's push subscription) undo what belongs to the session; never blocks sign-out.
+  await useNitroApp().hooks.callHook('st8-auth:session-end', { event, session }).catch((err: unknown) => {
+    console.error('[st8-auth] session-end listener failed:', (err as Error)?.message ?? err)
+  })
   await directusLogout(session.secure?.refresh_token)
   await clearUserSession(event)
 }

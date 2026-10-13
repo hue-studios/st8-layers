@@ -133,6 +133,10 @@ export default defineNitroPlugin(() => {
   sign-in by a partner or another app's member, an accepted invite), e.g. an onboarding page. It gets
   `?redirect=<where they were going>` (omitted when that's `/`) and is responsible for sending them on. Later
   sign-ins go straight to the redirect. Empty (the default) = no detour. Insider: `/onboarding`.
+- **`st8-auth:session-end`** (Nitro hook, `{ event, session }`): runs in `endSession` (sign-out, and a suspension
+  ending a session) before the cookie is cleared, with the session as it was; a listener's failure never blocks it.
+  **`st8-auth:sign-out`** (Nuxt app hook): runs in `useAuth().logout()` before the server call. layers/st8-social uses
+  both to forget this device's push subscription.
 - **`refreshSessionUser(event)`** (server util): after the host changes a user's names, avatar or profile, call it so
   `session.user` is re-read at once instead of at the next heartbeat; then `useUserSession().fetch()` on the client.
 

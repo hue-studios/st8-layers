@@ -13,6 +13,7 @@ export function authError(err: unknown, fallback: string) {
 
 export function useAuth() {
   const { user, loggedIn, fetch: fetchSession } = useUserSession()
+  const nuxtApp = useNuxtApp()
   const route = useRoute()
   const { postJoinPath, defaultAccess } = useRuntimeConfig().public.st8Auth
 
@@ -68,6 +69,12 @@ export function useAuth() {
 
   /** Sign out of this app (its Directus refresh token is revoked; other ST8 apps keep their own sessions). */
   async function logout() {
+    // Listeners undo what belongs to this browser first (st8-social: the push subscription); never blocks sign-out.
+    try {
+      await nuxtApp.callHook('st8-auth:sign-out')
+    } catch {
+      // never blocks sign-out
+    }
     await $fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
     await fetchSession()
     // A public site (defaultAccess 'public') keeps the visitor on the page they were reading, unless it's members-only.

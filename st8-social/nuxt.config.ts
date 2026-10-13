@@ -33,6 +33,27 @@ export default defineNuxtConfig({
         suspensions: [20, 86400],
         teasers: [60, 60],
       },
+      /**
+       * Web Push (README, "Push"). Off until the VAPID pair and subject are set: NUXT_ST8_SOCIAL_PUSH_VAPID_PRIVATE_KEY
+       * (server only, never in the repo or Directus), NUXT_ST8_SOCIAL_PUSH_SUBJECT (mailto: an ST8 address) and
+       * public.st8Social.push.vapidPublicKey. The server account needs CRUD on `push_subscriptions`.
+       */
+      push: {
+        vapidPrivateKey: '',
+        subject: '',
+        /** Notification types that push (a moderation notice about a reviewed report or a restored membership never does). */
+        types: ['reply', 'mention', 'connection_request', 'connection_accepted', 'intro', 'moderation', 'report'],
+        /** Devices per member per app; the ones seen longest ago go first. */
+        maxDevices: 10,
+        /** A device the app hasn't checked in from for this long (sessions last 30 days) is dropped. */
+        unseenDays: 30,
+        /** Failed sends in a row before a device is dropped (404/410 drop it at once). */
+        maxFailures: 5,
+        /** How long a push service keeps an undelivered push. */
+        ttlSeconds: 86400,
+        /** [max, seconds]: subscribe/unsubscribe and status per member; pushes per recipient (more = bell only). */
+        limits: { subscribe: [20, 3600], status: [60, 60], recipient: [20, 600] },
+      },
     },
     public: {
       st8Social: {
@@ -50,8 +71,22 @@ export default defineNuxtConfig({
         teasers: [] as { app: string, label: string, joinUrl: string, openUrl?: string }[],
         /** The host's moderation queue page (SocialModerationQueue); moderators' notifications link to it. */
         moderationPath: '/moderation',
+        push: {
+          /** The VAPID public key (base64url). Empty = push is off. NUXT_PUBLIC_ST8_SOCIAL_PUSH_VAPID_PUBLIC_KEY sets it. */
+          vapidPublicKey: '',
+          /** The service worker, served from the app root by this layer. */
+          serviceWorker: '/st8-sw.js',
+          /** Shown with each push: the app icon, and Android's small monochrome status-bar icon. Empty = none. */
+          icon: '',
+          badge: '',
+        },
       },
     },
+  },
+
+  // The service worker is fetched fresh on every update check.
+  routeRules: {
+    '/st8-sw.js': { headers: { 'Cache-Control': 'no-cache' } },
   },
 
   nitro: {

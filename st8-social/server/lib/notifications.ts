@@ -3,6 +3,8 @@ import type { NotificationPage, NotificationType, ReactionKey, SocialNotificatio
 import { type SocialContext, blockedWith, count, create, remove, rows, sys } from './core'
 import { mentionIds } from '../../shared/utils/social'
 import { resolvePeople } from './people'
+import { queuePush, pushConfig } from './push'
+import type { PushMessage } from '../../shared/types/push'
 
 // In-app notifications (the `notifications` collection, docs/go-live-plan.md §5). Written by the server account; a
 // member reads only their own (ST8 Social: recipient = $CURRENT_USER), which is also what their realtime subscription
@@ -64,6 +66,7 @@ export async function snippetFrom(body: string | null | undefined) {
  */
 export async function notify(ctx: SocialContext | null, list: NotifyInput[]) {
   const seen = new Set<string>()
+  const waits: Promise<void>[] = []
   for (const n of list) {
     const key = `${n.recipient}:${n.type}:${n.target.collection}:${n.target.item}`
     if (n.recipient === n.actor || seen.has(key)) continue
@@ -73,7 +76,7 @@ export async function notify(ctx: SocialContext | null, list: NotifyInput[]) {
         const blocked = ctx && ctx.me === n.actor ? ctx.blocked : await blockedWith(n.actor)
         if (blocked.includes(n.recipient)) continue
       }
-      await create('notifications', {
+      const row = await create<{ id: string }>('notifications', {
         recipient: n.recipient,
         actor: n.actor,
         type: n.type,
@@ -82,9 +85,70 @@ export async function notify(ctx: SocialContext | null, list: NotifyInput[]) {
         app: useSt8Social().app,
         data: n.data,
       }, ['id'])
+      if (pushable(n)) {
+        const created: NotificationRow = { id: row.id, type: n.type, actor: n.actor, target_collection: n.target.collection, target_item: n.target.item, data: n.data, read_at: null, date_created: new Date().toISOString() }
+        const wait = queuePush({ recipient: n.recipient, type: n.type }, () => pushMessage(n.recipient, created))
+        if (wait) waits.push(wait)
+      }
     } catch (err) {
       console.error('[st8-social] notification not created:', n.type, directusError(err).message ?? err)
     }
+  }
+  if (waits.length) await Promise.all(waits)
+}
+
+// ── Push (server/lib/push.ts sends) ────────────────────────────────────────────────────────────────────────────
+
+/** Bell only: a reviewed report, a restored membership. Reactions aren't in the pushed types at all. */
+const BELL_ONLY_ACTIONS = new Set(['report_actioned', 'report_dismissed', 'unsuspend'])
+
+function pushable(n: NotifyInput) {
+  return pushConfig().enabled && !(n.type === 'moderation' && BELL_ONLY_ACTIONS.has(n.data.action ?? ''))
+}
+
+/** Which earlier push this one replaces on the device: activity on the same item, the same person, the same report. */
+function pushTag(n: NotificationRow) {
+  const app = useSt8Social().app
+  const on = n.data?.on ?? { collection: n.target_collection, item: n.target_item }
+  switch (n.type) {
+    case 'connection_request':
+    case 'connection_accepted':
+      return `${app}:person:${n.actor}`
+    case 'intro':
+      return `${app}:intro:${n.data?.with ?? n.actor}`
+    case 'report':
+    case 'moderation':
+      return `${app}:${n.type}:${n.target_collection}:${n.target_item}`
+    default:
+      return `${app}:${on.collection}:${on.item}`
+  }
+}
+
+/**
+ * What the lock screen shows: the app's name, then the bell's sentence with the actor's name. Never the snippet; a
+ * report's reason stays in the app.
+ */
+async function pushMessage(recipient: string, n: NotificationRow): Promise<PushMessage> {
+  const row: NotificationRow = n.type === 'report' ? { ...n, data: { ...n.data, reason: undefined } } : n
+  const [people, unread] = await Promise.all([
+    resolvePeople([row.actor, row.data?.with]),
+    count(sys(), 'notifications', { recipient: { _eq: recipient }, read_at: { _null: true }, app: { _eq: useSt8Social().app } }),
+  ])
+  const text = textOf(row, people)
+  const name = row.actor ? people.get(row.actor)?.name : null
+  const sentence = name ? `${name} ${text}` : `${text.charAt(0).toUpperCase()}${text.slice(1)}`
+  const { icon, badge } = pushConfig()
+  return {
+    v: 1,
+    id: row.id,
+    title: useSt8Auth().appName,
+    body: /[.!?]$/.test(sentence) ? sentence : `${sentence}.`,
+    url: linkOf(row, people) ?? '/',
+    tag: pushTag(row),
+    count: unread,
+    ...(icon ? { icon } : {}),
+    ...(badge ? { badge } : {}),
+    ts: Date.parse(row.date_created),
   }
 }
 

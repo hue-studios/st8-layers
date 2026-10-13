@@ -1,5 +1,57 @@
 # Changelog
 
+## v0.5.0
+
+Web Push for the installed app (Insider's Phase 11, `insider/docs/go-live-plan.md`). Off in every app until it sets
+its VAPID keys, so Summit and Portal can take this release and change nothing.
+
+### Push (st8-social)
+
+- **Every notification `notify()` creates can also reach the member's devices** while the app is closed: replies,
+  comments on their items, mentions, connection requests and accepts, intros (st8-network's types go through the
+  same `notify()`), moderation notices and, for moderators, report notices. Not reactions, reviewed reports or a
+  restored membership: bell only. The lock screen shows the app's name and the bell's sentence with the actor's name;
+  never a comment, post or note snippet, never a report's reason, and moderation and report pushes name nobody. A tag
+  per item, person or report lets a newer push replace the older; the unread count sets the app badge; tapping marks it
+  read and opens the page in the app.
+- **`SocialPushSwitch`** ("Notifications on this device"), at the foot of `SocialNotificationBell` and anywhere the
+  host puts it. Permission is asked only from the tap. On iPhone and iPad in a Safari tab it explains Add to Home
+  Screen instead (iOS delivers only to Home Screen apps); a blocked permission is explained, never re-asked.
+  `useSocialPush()` is its state. The app badge follows the unread count (`useSocialNotifications`).
+- **Routes**: `POST /api/social/push/subscribe`, `/unsubscribe`, `/status` (POST, so an endpoint never lands in a URL
+  or a log). Endpoints must be one of the browsers' push services over https (fcm.googleapis.com,
+  *.push.services.mozilla.com, *.push.apple.com, *.notify.windows.com), checked again before each send, redirects
+  never followed. At most 10 devices per member per app; 20 subscription changes an hour.
+- **Sending**: RFC 8291 encryption and RFC 8292 VAPID on Web Crypto, no dependency. After the response on Vercel (the
+  per-request `waitUntil`), before it when that's missing. 404/410 drops a device, 5 failures in a row drop it, at
+  most 20 pushes per recipient per 10 minutes.
+- **Devices go** when switched off, at sign-out, when the membership is anything but active, with the account, after
+  30 days unseen, and when someone else signs in on that browser.
+- **`public/st8-sw.js`**: the service worker (push and notification taps only; no fetch handler, no caching),
+  registered when a member turns push on.
+
+### Hooks (st8-auth)
+
+- **`st8-auth:session-end`** (Nitro, `{ event, session }`) runs in `endSession` before the cookie is cleared;
+  **`st8-auth:sign-out`** (Nuxt app) runs in `useAuth().logout()` before the server call. `session.secure` gains
+  `push_subscription` (st8-social's). Listeners never block a sign-out.
+
+### Upgrading
+
+1. Bump the ref: `"@hue-studios/st8-layers": "github:hue-studios/st8-layers#v0.5.0"`, `pnpm install`. Without keys,
+   nothing changes (the switch doesn't render, no service worker is registered, `notify()` reads nothing more).
+2. To turn push on:
+   - **Directus**: the `push_subscriptions` collection (Insider's `scripts/directus/push-subscriptions.mjs`, already
+     applied on the shared Directus) and create, read, update, delete on it for the app's server policy (Summit:
+     `Summit Server` in summit-v2's `scripts/directus-st8-access.mjs`). No member, Public or partner access.
+   - **Keys** (one pair per app and environment; Insider's `scripts/push-keys.mjs`):
+     `NUXT_ST8_SOCIAL_PUSH_VAPID_PRIVATE_KEY` (server only), `NUXT_PUBLIC_ST8_SOCIAL_PUSH_VAPID_PUBLIC_KEY`,
+     `NUXT_ST8_SOCIAL_PUSH_SUBJECT` (`mailto:` an ST8 address).
+   - **Config**: `public.st8Social.push.icon` (the app icon) and `badge` (a monochrome PNG for Android's status bar).
+   - **UI**: `switch` from shadcn-vue in `~/components/ui/` (the bell uses it); an installable manifest
+     (`display: standalone`) for iPhones; `SocialPushSwitch` where members manage the device (Insider: `/profile`).
+   - Check: a host route or service worker at `/st8-sw.js` would clash.
+
 ## v0.4.0
 
 What Insider's launch follow-ups asked for (`insider/docs/st8-layers-requests.md` §6, §7).

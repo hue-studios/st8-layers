@@ -12,6 +12,7 @@ const { items, unread, loading, loaded, hasMore } = notifications
 const desktop = useSocialDesktop()
 const open = ref(false)
 const now = useSocialClock()
+const push = useSocialPush()
 
 watch(open, (isOpen) => {
   if (!isOpen) return
@@ -49,6 +50,9 @@ function go(n: SocialNotification) {
         <div class="max-h-[60vh] overflow-y-auto p-1">
           <SocialNotificationList :items="items" :loading="loading && !loaded" :has-more="hasMore" :now="now" @open="go" @more="notifications.loadMore()" />
         </div>
+        <div v-if="push.state.configured" class="border-t border-glass-border px-4 py-3">
+          <SocialPushSwitch compact />
+        </div>
       </PopoverContent>
     </Popover>
     <template v-else>
@@ -63,8 +67,11 @@ function go(n: SocialNotification) {
             <SheetDescription class="sr-only">Replies, mentions, reactions and moderation notices</SheetDescription>
             <Button v-if="unread" variant="link" size="sm" class="h-auto self-start p-0 text-[11px] font-bold uppercase" @click="notifications.markRead('all')">Mark all read</Button>
           </SheetHeader>
-          <div class="min-h-0 flex-1 overflow-y-auto p-1 pb-[env(safe-area-inset-bottom)]">
+          <div class="min-h-0 flex-1 overflow-y-auto p-1" :class="{ 'pb-[env(safe-area-inset-bottom)]': !push.state.configured }">
             <SocialNotificationList :items="items" :loading="loading && !loaded" :has-more="hasMore" :now="now" @open="go" @more="notifications.loadMore()" />
+          </div>
+          <div v-if="push.state.configured" class="border-t border-glass-border px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+            <SocialPushSwitch compact />
           </div>
         </SheetContent>
       </Sheet>

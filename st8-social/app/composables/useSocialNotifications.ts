@@ -33,10 +33,25 @@ function refreshSoon() {
   refreshTimer = setTimeout(() => void load(), 300)
 }
 
+/**
+ * The app icon's badge follows the unread count where the browser has one (installed Chrome and Edge, iOS Home Screen
+ * apps). Only while push is set up in this app: a push sets it too, and both should agree.
+ */
+function followBadge(loggedIn: Ref<boolean>) {
+  const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>, clearAppBadge?: () => Promise<void> }
+  const push = (useRuntimeConfig().public.st8Social as { push?: { vapidPublicKey?: string } } | undefined)?.push
+  if (!nav.setAppBadge || !nav.clearAppBadge || !push?.vapidPublicKey) return
+  watch([loggedIn, unread], ([ok, n]) => {
+    const count = ok ? n : 0
+    void (count ? nav.setAppBadge!(count) : nav.clearAppBadge!()).catch(() => {})
+  }, { immediate: true })
+}
+
 function start() {
   if (started || import.meta.server) return
   started = true
   const { loggedIn } = useUserSession()
+  effectScope(true).run(() => followBadge(loggedIn))
   // App-wide, not tied to the component that started it (the bell unmounts on auth pages).
   effectScope(true).run(() => watch(loggedIn, (ok) => {
     unsubscribe?.()

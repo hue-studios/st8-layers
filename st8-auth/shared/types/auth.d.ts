@@ -21,6 +21,8 @@ declare module '#auth-utils' {
     membership: SessionMembership | null
     /** Epoch ms of the last membership/user re-read. */
     checked_at: number
+    /** layers/st8-social: the push subscription this browser made (removed at sign-out). */
+    push_subscription?: string | null
   }
 
   interface UserSession {
