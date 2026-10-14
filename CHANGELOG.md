@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.5.1
+
+From Insider's Phase 11 device checks. Nothing to change in a host app.
+
+### Push (st8-social)
+
+- **The switch agrees across windows.** A browser's tabs and its installed app are one device (one service worker, one
+  subscription), but a window only rechecked after 5 minutes away, so turning push on in the browser left the installed
+  app's switch off (and the other way round). Now a change in one window is announced to the others
+  (`BroadcastChannel('st8-social-push')`), which recheck at once (a sign-out there just turns them off); a window
+  rechecks every time it's shown, not only after 5 minutes; and the switch follows the notification permission as it
+  changes in the browser's or the system's settings (`navigator.permissions`, where supported).
+- `useSocialPush()` gains `follow(onChange)`, which the push plugin calls once.
+
 ## v0.5.0
 
 Web Push for the installed app (Insider's Phase 11, `insider/docs/go-live-plan.md`). Off in every app until it sets

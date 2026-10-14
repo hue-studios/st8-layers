@@ -69,6 +69,21 @@ async function send(path: 'subscribe' | 'unsubscribe' | 'status', body: Record<s
   return $fetch<PushState>(`/api/social/push/${path}`, { method: 'POST', body })
 }
 
+// Windows of one browser share its service worker and subscription: a browser tab and the installed app are one device.
+// A change in one is announced to the others, which recheck (or, after a sign-out, just turn off).
+let channel: BroadcastChannel | null = null
+function windows() {
+  if (!channel && typeof BroadcastChannel !== 'undefined') channel = new BroadcastChannel('st8-social-push')
+  return channel
+}
+function announce(type: 'changed' | 'forgotten') {
+  try {
+    windows()?.postMessage({ type })
+  } catch {
+    // Another window catches up when it's next shown.
+  }
+}
+
 /** Re-read the device's state (on load, and when the app comes back). Quietly re-subscribes after a key change. */
 async function refresh() {
   if (import.meta.server) return
@@ -121,6 +136,7 @@ async function enable() {
     }
     sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytesOf(publicKey) })
     state.enabled = (await send('subscribe', sub.toJSON() as Record<string, unknown>)).enabled
+    announce('changed')
   } catch (err) {
     state.error = failure(err, 'Couldn\'t turn notifications on. Try again.')
   } finally {
@@ -140,6 +156,7 @@ async function disable() {
       await sub.unsubscribe().catch(() => {})
     }
     state.enabled = false
+    announce('changed')
   } catch (err) {
     state.error = failure(err, 'Couldn\'t turn notifications off. Try again.')
   } finally {
@@ -157,8 +174,29 @@ async function forgetDevice() {
     // The server row is gone anyway; a stale browser subscription is never pushed to.
   }
   state.enabled = false
+  announce('forgotten')
+}
+
+/**
+ * Keep this window's switch current (the push plugin calls it once): another window of this browser turned it on or
+ * off, or the permission changed in the browser's or the system's settings.
+ */
+function follow(onChange: () => void) {
+  if (import.meta.server) return
+  const ch = windows()
+  if (ch) {
+    ch.onmessage = (event: MessageEvent<{ type?: string }>) => {
+      if (event.data?.type === 'forgotten') state.enabled = false
+      else if (event.data?.type === 'changed') onChange()
+    }
+  }
+  navigator.permissions?.query({ name: 'notifications' as PermissionName })
+    .then((status) => {
+      status.onchange = () => onChange()
+    })
+    .catch(() => {}) // not every browser can watch it; the next return to the window rechecks
 }
 
 export function useSocialPush() {
-  return { state: readonly(state), refresh, enable, disable, forgetDevice }
+  return { state: readonly(state), refresh, enable, disable, forgetDevice, follow }
 }

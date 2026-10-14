@@ -5,7 +5,7 @@ export default defineNuxtPlugin((nuxtApp) => {
   const push = (useRuntimeConfig().public.st8Social as { push?: { vapidPublicKey?: string } } | undefined)?.push
   if (!push?.vapidPublicKey) return
   const { loggedIn } = useUserSession()
-  const { refresh, forgetDevice } = useSocialPush()
+  const { refresh, forgetDevice, follow } = useSocialPush()
 
   nuxtApp.hook('st8-auth:sign-out', forgetDevice)
 
@@ -19,8 +19,8 @@ export default defineNuxtPlugin((nuxtApp) => {
     navigator.serviceWorker.startMessages()
   }
 
-  // On sign-in, and when the app comes back (at most every 5 minutes): the member may have changed it on another tab,
-  // or in the browser's settings.
+  // On sign-in, when another window of this browser changes it, when the permission changes, and each time the app
+  // comes back (the member may have changed it in a window that couldn't tell this one, or in the browser's settings).
   let checked = 0
   const check = () => {
     checked = Date.now()
@@ -29,7 +29,10 @@ export default defineNuxtPlugin((nuxtApp) => {
   watch(loggedIn, (ok) => {
     if (ok) check()
   }, { immediate: true })
+  follow(() => {
+    if (loggedIn.value) check()
+  })
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && loggedIn.value && Date.now() - checked > 300_000) check()
+    if (document.visibilityState === 'visible' && loggedIn.value && Date.now() - checked > 2000) check()
   })
 })

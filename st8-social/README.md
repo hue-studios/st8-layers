@@ -257,7 +257,10 @@ The layer expects the host to provide:
   - **Turning it on** is per device and per app, from the switch only: permission is asked from the tap, never on load.
     iPhone and iPad deliver only to a Home Screen app (iOS 16.4+), so in a Safari tab the switch explains how to add it
     instead; a blocked permission is explained, never re-asked. The host needs an installable manifest
-    (`display: standalone`) for that.
+    (`display: standalone`) for that. A "device" is a browser: its tabs and its installed app share one service worker
+    and one subscription, so they show one switch state. A change in one window reaches the others at once (a
+    `BroadcastChannel`), a window rechecks each time it's shown, and the switch follows the browser's permission as it
+    changes (where the browser reports that).
   - **What pushes**: `push.types` (reply, mention, connection request, accepted, intro, moderation, report). Never a
     reaction (a burst would buzz a phone dozens of times), a reviewed report or a restored membership (bell only).
     Each push is the bell's notification: title the app's name, body the actor's name and the bell's sentence (never the
